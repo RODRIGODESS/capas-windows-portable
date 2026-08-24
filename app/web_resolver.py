@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import itertools
+from urllib.parse import urlencode
 from collections import OrderedDict
 from typing import Callable, Optional
 
@@ -148,6 +149,39 @@ class _AttachedBrowser(QObject):
         self.profile.setUrlRequestInterceptor(self.interceptor)
         self.view: Optional[QWebEngineView] = None
         self.page: Optional[CapturePage] = None
+        self._cookies = {}
+        try:
+            store = self.profile.cookieStore()
+            store.cookieAdded.connect(self._cookie_added)
+        except Exception:
+            pass
+
+    def _cookie_added(self, cookie):
+        try:
+            name = bytes(cookie.name()).decode("utf-8", "ignore")
+            value = bytes(cookie.value()).decode("utf-8", "ignore")
+            domain = (cookie.domain() or "").lstrip(".").lower()
+            path = cookie.path() or "/"
+            self._cookies[(domain, path, name)] = value
+        except Exception:
+            pass
+
+    def cookie_header_for(self, url: str) -> str:
+        try:
+            from urllib.parse import urlparse
+            u = urlparse(url)
+            host = (u.hostname or "").lower()
+            path = u.path or "/"
+            parts = []
+            for (domain, cpath, name), value in self._cookies.items():
+                if domain and not (host == domain or host.endswith("." + domain)):
+                    continue
+                if cpath and not path.startswith(cpath):
+                    continue
+                parts.append(f"{name}={value}")
+            return "; ".join(parts)
+        except Exception:
+            return ""
 
     def new_page(self, captured_callback: Callable[[str], None]) -> CapturePage:
         self.destroy_page()
@@ -193,6 +227,123 @@ class _AttachedBrowser(QObject):
                 pass
         self.page = None
         self.view = None
+
+
+class AppsScriptFeedResolver(QObject):
+    """Busca o JSON do Apps Script pelo mesmo Chromium usado no restante do app.
+
+    No Windows corporativo, requests/urllib podem não herdar corretamente proxy,
+    SSO ou cadeia de certificados do sistema. A WebView Android usa a pilha de rede
+    do aparelho; aqui o Chromium do Qt usa a configuração do Windows e evita o
+    estado eterno "Localizando páginas no Gmail...".
+    """
+
+    completed = Signal(object, object)  # matters, meta
+    failed = Signal(str)
+    progress = Signal(str)
+    TIMEOUT_MS = 32000
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.browser = _AttachedBrowser(parent or self, ANDROID_GMAIL_UA)
+        self.page: Optional[CapturePage] = None
+        self._generation = 0
+        self._done = True
+
+    def fetch(self, base_url: str, access_key: str, target_date):
+        base = (base_url or "").strip()
+        low = base.lower()
+        if not base:
+            self.failed.emit("Gmail automático não configurado")
+            return
+        if not (low.startswith("https://script.google.com/macros/s/") and "/exec" in low):
+            self.failed.emit("URL inválida do Apps Script")
+            return
+        self._generation += 1
+        g = self._generation
+        self._done = False
+        params = {"key": access_key, "action": "matters", "date": target_date.isoformat()}
+        endpoint = base + ("&" if "?" in base else "?") + urlencode(params)
+        self.progress.emit("Conectando ao Apps Script pelo navegador do Windows…")
+        self.page = self.browser.new_page(lambda _u, _g=g: None)
+        self.page.loadFinished.connect(lambda ok, gen=g: self._loaded(ok, gen))
+        self.page.load(QUrl(endpoint))
+        QTimer.singleShot(self.TIMEOUT_MS, lambda gen=g: self._timeout(gen))
+
+    def _active(self, g):
+        return (not self._done) and g == self._generation
+
+    def _loaded(self, ok: bool, g: int):
+        if not self._active(g):
+            return
+        # Mesmo com loadFinished=False, redirects do Apps Script podem já ter
+        # colocado o JSON na página. Esperamos um instante e lemos o texto.
+        QTimer.singleShot(350, lambda gen=g: self._read_text(gen))
+
+    def _read_text(self, g: int):
+        if not self._active(g) or not self.page:
+            return
+        self.page.toPlainText(lambda text, gen=g: self._parse(text, gen))
+
+    def _parse(self, text: str, g: int):
+        if not self._active(g):
+            return
+        body = (text or "").strip()
+        if not body:
+            # Apps Script às vezes termina um redirect pouco depois do loadFinished.
+            QTimer.singleShot(700, lambda gen=g: self._read_text(gen))
+            return
+        if body.lower().startswith(("<!doctype", "<html")):
+            self._fail("A ponte abriu HTML. Atualize a implantação do Apps Script e mantenha acesso como Qualquer pessoa.", g)
+            return
+        try:
+            root = json.loads(body)
+        except Exception:
+            # O Chromium pode renderizar JSON dentro de um <pre>. toPlainText já
+            # remove a tag; se ainda não for JSON, mostramos diagnóstico real.
+            self._fail("Resposta inválida da ponte Gmail", g)
+            return
+        if not root.get("ok"):
+            self._fail(str(root.get("error") or "Falha na ponte Gmail"), g)
+            return
+        out = OrderedDict()
+        for item in root.get("matters") or []:
+            name = str(item.get("name") or "").strip()
+            matter_url = str(item.get("matterUrl") or "").strip()
+            if not name or not matter_url:
+                continue
+            arr = out.setdefault(name, [])
+            if matter_url not in arr and len(arr) < 5:
+                arr.append(matter_url)
+        if not out:
+            threads = int(root.get("threads") or 0)
+            messages = int(root.get("messagesScanned") or 0)
+            raw_links = int(root.get("rawLeiaMaisFound") or 0)
+            dated = int(root.get("datedItemsMatched") or 0)
+            if threads == 0 or messages == 0:
+                msg = "A ponte está ativa, mas não encontrou o e-mail do clipping para a data selecionada"
+            elif raw_links == 0:
+                msg = "O e-mail foi encontrado, mas nenhum link 'Leia mais' foi localizado"
+            elif dated == 0:
+                msg = "Há links 'Leia mais', mas nenhum corresponde à data selecionada"
+            else:
+                msg = "Nenhuma capa compatível foi classificada no Gmail para a data selecionada"
+            self._fail(msg, g)
+            return
+        self._done = True
+        self.browser.destroy_page()
+        self.completed.emit(dict(out), root)
+
+    def _timeout(self, g: int):
+        if self._active(g):
+            self._fail("Ponte Gmail excedeu o tempo de resposta pelo navegador do Windows", g)
+
+    def _fail(self, msg: str, g: int):
+        if not self._active(g):
+            return
+        self._done = True
+        self.browser.destroy_page()
+        self.failed.emit(msg)
 
 
 class CentralClippingBatchResolver(QObject):
@@ -342,6 +493,7 @@ class FrontPageResolver(QObject):
         self._sources: list[str] = []
         self._source_index = -1
         self.last_referer = ""
+        self.last_cookie_header = ""
 
     def resolve(self, newspaper_name: str, callback: Callable[[str | None, str | None], None]):
         name = (newspaper_name or "").upper().strip()
@@ -380,6 +532,7 @@ class FrontPageResolver(QObject):
         self._scan_count = 0
         source = self._sources[self._source_index]
         self.last_referer = source
+        self.last_cookie_header = ""
         self.progress.emit("Abrindo FrontPages…" if "frontpages.com" in source else "Tentando PressReader…")
         self.page = self.browser.new_page(lambda _u, _g=g: None)
         self.page.loadFinished.connect(lambda ok, gen=g: self._after_load(ok, gen))
@@ -469,6 +622,7 @@ class FrontPageResolver(QObject):
             return
         self._finished = True
         self._generation += 1
+        self.last_cookie_header = self.browser.cookie_header_for(url)
         self.browser.destroy_page()
         cb = self.done_cb; self.done_cb = None
         if cb:

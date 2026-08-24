@@ -1,4 +1,10 @@
-import os, re, subprocess, tempfile, unicodedata
+import csv
+import io
+import os
+import re
+import subprocess
+import tempfile
+import unicodedata
 from datetime import date
 from pathlib import Path
 from PIL import Image
@@ -27,41 +33,92 @@ def _tesseract_exe() -> Path | None:
     return None
 
 
-def read_top(path: Path) -> str:
-    """OCR somente da zona superior para manter a busca rápida no Windows.
+def _run_tesseract_tsv(path: Path):
+    """Retorna (texto bruto, linhas com bbox, largura, altura).
 
-    O Android usa ML Kit com caixas de texto. Aqui usamos o mesmo critério de
-    masthead, mas com Tesseract portátil na faixa superior da página.
+    É a equivalência desktop do ML Kit usado por ClippingImageScanner.java:
+    precisamos de texto + posição de cada linha para pontuar masthead no topo.
     """
     exe = _tesseract_exe()
     if not exe:
-        return ""
+        return "", [], 0, 0
+
+    im = Image.open(path).convert("RGB")
+    # Android analisa preview de ~1200px; mantemos a mesma escala.
+    if im.width > 1200:
+        nh = max(1, round(im.height * (1200 / im.width)))
+        im = im.resize((1200, nh), Image.Resampling.LANCZOS)
+    w, h = im.size
+
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "page.png"
+        im.save(p, "PNG")
+        cmd = [str(exe), str(p), "stdout", "-l", "por+eng", "--psm", "3", "tsv"]
+        cp = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=35,
+            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+        )
+        tsv = cp.stdout or ""
+
+    groups = {}
     try:
-        im = Image.open(path).convert("RGB")
-        # 38% cobre masthead/data e evita OCR lento da página inteira.
-        h = max(1, int(im.height * 0.38))
-        top = im.crop((0, 0, im.width, h))
-        # O Android analisa preview ~1200 px. Fazemos o mesmo para velocidade.
-        if top.width > 1400:
-            nh = max(1, round(top.height * (1400 / top.width)))
-            top = top.resize((1400, nh), Image.Resampling.LANCZOS)
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td) / "top.png"
-            top.save(p, "PNG")
-            cmd = [str(exe), str(p), "stdout", "-l", "por+eng", "--psm", "6"]
-            cp = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                encoding="utf-8",
-                errors="ignore",
-                timeout=20,
-                creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
-            )
-            return cp.stdout or ""
+        reader = csv.DictReader(io.StringIO(tsv), delimiter="\t")
+        for r in reader:
+            txt = (r.get("text") or "").strip()
+            if not txt:
+                continue
+            try:
+                conf = float(r.get("conf") or -1)
+            except Exception:
+                conf = -1
+            if conf < 0:
+                continue
+            key = (r.get("block_num"), r.get("par_num"), r.get("line_num"))
+            try:
+                left = int(r.get("left") or 0); top = int(r.get("top") or 0)
+                width = int(r.get("width") or 0); height = int(r.get("height") or 0)
+            except Exception:
+                continue
+            g = groups.setdefault(key, {"words": [], "left": left, "top": top, "right": left+width, "bottom": top+height})
+            g["words"].append(txt)
+            g["left"] = min(g["left"], left); g["top"] = min(g["top"], top)
+            g["right"] = max(g["right"], left+width); g["bottom"] = max(g["bottom"], top+height)
     except Exception:
-        return ""
+        groups = {}
+
+    lines = []
+    for g in groups.values():
+        text = " ".join(g["words"]).strip()
+        if not text:
+            continue
+        lines.append({
+            "text": text,
+            "left": g["left"], "top": g["top"],
+            "width": max(1, g["right"]-g["left"]),
+            "height": max(1, g["bottom"]-g["top"]),
+        })
+    lines.sort(key=lambda x: (x["top"], x["left"]))
+    raw = "\n".join(x["text"] for x in lines)
+    return raw, lines, w, h
+
+
+def is_strong_nyt_masthead(text: str) -> bool:
+    t = normalize(text)
+    if "ALL THE NEWS THAT S FIT TO PRINT" in t or "ALL THE NEWS THAT IS FIT TO PRINT" in t:
+        return True
+    if "THE NEW YORK TIMES" not in t:
+        return False
+    if "THE NEW YORK TIMES COMPANY" in t and not re.search(
+        r"THE NEW YORK TIMES (MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)", t
+    ):
+        return False
+    return True
 
 
 def matches_expected(text: str, name: str) -> bool:
@@ -87,21 +144,8 @@ def matches_expected(text: str, name: str) -> bool:
     if "WASHINGTON POST" in expected:
         return "WASHINGTON" in t and "POST" in t and "WASHINGTON POST SPORTS" not in t
     if "VALOR ECONOMICO" in expected:
-        return "VALOR" in t and ("ECONOMICO" in t or "VALOR" in t)
+        return "VALOR" in t
     return bool(expected and expected in t)
-
-
-def is_strong_nyt_masthead(text: str) -> bool:
-    t = normalize(text)
-    if "ALL THE NEWS THAT S FIT TO PRINT" in t or "ALL THE NEWS THAT IS FIT TO PRINT" in t:
-        return True
-    if "THE NEW YORK TIMES" not in t:
-        return False
-    if "THE NEW YORK TIMES COMPANY" in t and not re.search(
-        r"THE NEW YORK TIMES (MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY)", t
-    ):
-        return False
-    return True
 
 
 def _contains_ad(text: str) -> bool:
@@ -112,11 +156,11 @@ def _contains_ad(text: str) -> bool:
 def _detect_other(text: str, expected_name: str) -> str:
     t, expected = normalize(text), normalize(expected_name)
     if "O GLOBO" in t and expected != "O GLOBO": return "O GLOBO"
-    if "FOLHA" in t and "PAULO" in t and "FOLHA" not in expected: return "FOLHA"
-    if "CORREIO" in t and "BRAZILIENSE" in t and "CORREIO BRAZILIENSE" not in expected: return "CORREIO"
+    if "FOLHA" in t and "PAULO" in t and "FOLHA" not in expected: return "FOLHA DE SÃO PAULO"
+    if "CORREIO" in t and "BRAZILIENSE" in t and "CORREIO BRAZILIENSE" not in expected: return "CORREIO BRAZILIENSE"
     if "ESTADO" in t and "MINAS" in t and "ESTADO DE MINAS" not in expected: return "ESTADO DE MINAS"
     if (("ESTADO" in t and "PAULO" in t) or "ESTADAO" in t) and "ESTADAO" not in expected: return "ESTADÃO"
-    if "NEW YORK" in t and "TIMES" in t and "NEW YORK TIMES" not in expected: return "NYT"
+    if "NEW YORK" in t and "TIMES" in t and "NEW YORK TIMES" not in expected: return "THE NEW YORK TIMES"
     return ""
 
 
@@ -127,54 +171,90 @@ def _date_matches(text: str, target_date: date | None) -> bool:
     day, year = str(target_date.day), str(target_date.year)
     months_pt = ["", "JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO", "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"]
     months_en = ["", "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"]
-    return (
-        re.search(rf"(?:^| )0?{re.escape(day)}(?: |$)", " " + t + " ") is not None
-        and year in t
-        and (months_pt[target_date.month] in t or months_en[target_date.month] in t)
-    )
+    padded = " " + t + " "
+    has_day = re.search(rf"(?:^| )0?{re.escape(day)}(?: |$)", padded) is not None
+    return has_day and year in t and (months_pt[target_date.month] in t or months_en[target_date.month] in t)
 
 
 def score_candidate(path: Path, name: str, mastheads: list[str], target_date: date | None = None) -> tuple[int, int, str]:
-    """Pontuação comparativa 0..100 alinhada ao Android v0.7.5.x."""
-    text = read_top(path)
-    n = normalize(text)
+    """Port fiel de ClippingImageScanner.scoreCandidate (Android v0.7.5.9)."""
     try:
-        im = Image.open(path)
-        w, h = im.size
+        with Image.open(path) as orig:
+            ow, oh = orig.size
+        if ow < 700 or oh < 950 or oh / max(1, ow) < 1.12:
+            return 0, 0, ""
+        raw, lines, w, h = _run_tesseract_tsv(path)
     except Exception:
-        return 0, 0, text
+        return 0, 0, ""
 
-    if w < 700 or h < 950 or h / max(1, w) < 1.12:
-        return 0, 0, text
+    full = normalize(raw)
+    top20 = []; top35 = []; top50 = []
+    masthead_strength = 0
+    h = max(1, h); w = max(1, w)
 
-    expected = matches_expected(n, name)
+    for line in lines:
+        line_text = normalize(line["text"])
+        center_y = (line["top"] + line["height"] / 2) / h
+        if center_y <= 0.20: top20.append(line_text)
+        if center_y <= 0.35: top35.append(line_text)
+        if center_y <= 0.50: top50.append(line_text)
+        if matches_expected(line_text, name) and center_y <= 0.32:
+            height_frac = line["height"] / h
+            width_frac = line["width"] / w
+            strength = 1
+            if height_frac >= 0.018 or width_frac >= 0.24: strength = 2
+            if height_frac >= 0.030 or width_frac >= 0.40: strength = 3
+            if height_frac >= 0.045 or width_frac >= 0.55: strength = 4
+            masthead_strength = max(masthead_strength, strength)
+
+    t20 = normalize(" ".join(top20)); t35 = normalize(" ".join(top35)); t50 = normalize(" ".join(top50))
+    expected20 = matches_expected(t20, name)
+    expected35 = matches_expected(t35, name)
+    expected50 = matches_expected(t50, name)
+    expected_full = matches_expected(full, name)
+    if expected20 and masthead_strength == 0:
+        masthead_strength = 1
+
     score = 8
-    if expected:
-        score += 72
+    if masthead_strength >= 4: score += 72
+    elif masthead_strength == 3: score += 64
+    elif masthead_strength == 2: score += 54
+    elif expected20: score += 42
+    elif expected35: score += 32
+    elif expected50: score += 22
+    elif expected_full: score += 10
 
-    # Evidências secundárias; a presença do masthead continua dominando.
-    if h > w: score += 4
-    ratio = w / max(1, h)
-    if 0.45 <= ratio <= 0.72: score += 5
-    elif ratio <= 0.80: score += 2
-    if w >= 1200 and h >= 1600: score += 5
-    if _date_matches(n, target_date): score += 8
+    line_count = len(lines)
+    if line_count >= 24: score += 10
+    elif line_count >= 14: score += 7
+    elif line_count >= 8: score += 3
+    elif line_count <= 3: score -= 8
 
-    other = _detect_other(n, name)
+    if _date_matches(full, target_date): score += 8
+    other = _detect_other(t35, name)
     if other: score -= 70
+    ad = _contains_ad(full)
+    if ad: score -= 10 if expected20 else 35
 
-    ad = _contains_ad(n)
-    if ad: score -= 10 if expected else 35
+    nyt = "NEW YORK TIMES" in normalize(name)
+    nyt_company_only = nyt and "THE NEW YORK TIMES COMPANY" in full and not is_strong_nyt_masthead(t20)
+    if nyt_company_only:
+        score -= 45
+        score = min(score, 35)
 
-    if normalize(name).find("NEW YORK TIMES") >= 0:
-        nyt_company_only = "THE NEW YORK TIMES COMPANY" in n and not is_strong_nyt_masthead(n)
-        if nyt_company_only:
-            score -= 45
-            score = min(score, 35)
-
-    if not expected: score = min(score, 55)
+    if not expected_full: score = min(score, 55)
     if other: score = min(score, 20)
-    if ad and not expected: score = min(score, 35)
-
+    if ad and not expected20: score = min(score, 35)
     score = max(0, min(100, score))
-    return score, score, text
+    return score, score, raw
+
+
+def read_top(path: Path) -> str:
+    """Compatibilidade: OCR do topo usado para rejeitar WaPo SPORTS."""
+    try:
+        raw, lines, _w, h = _run_tesseract_tsv(path)
+        if not lines or h <= 0:
+            return raw
+        return "\n".join(x["text"] for x in lines if (x["top"] + x["height"] / 2) / h <= 0.34)
+    except Exception:
+        return ""

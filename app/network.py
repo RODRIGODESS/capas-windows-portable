@@ -87,13 +87,15 @@ def fetch_matters(apps_script_url: str, target_date: date) -> tuple[dict[str, li
     return out, root
 
 
-def download_image(url: str, dest: Path, referer: str = "") -> Path:
+def download_image(url: str, dest: Path, referer: str = "", cookie_header: str = "", user_agent: str = IMAGE_UA) -> Path:
     headers = {
-        "User-Agent": IMAGE_UA,
+        "User-Agent": user_agent or IMAGE_UA,
         "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
     }
     if referer:
         headers["Referer"] = referer
+    if cookie_header:
+        headers["Cookie"] = cookie_header
     with requests.get(url, timeout=(7, 18), headers=headers, stream=True, allow_redirects=True) as r:
         r.raise_for_status()
         ctype = (r.headers.get("Content-Type") or "").lower()

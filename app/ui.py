@@ -17,7 +17,7 @@ from .newspapers import load_entries
 from .ocr import score_candidate, normalize
 from .pdf_export import export_pdf, build_filename
 from .workers import Worker
-from .web_resolver import Resolver, CentralClippingBatchResolver
+from .web_resolver import Resolver, CentralClippingBatchResolver, AppsScriptFeedResolver, ANDROID_FRONT_UA
 
 STYLE = """
 QMainWindow,QWidget{background:#071625;color:#eaf3ff;font-family:'Segoe UI';font-size:13px}
@@ -52,12 +52,14 @@ class MainWindow(QMainWindow):
         # v1.0.1: os ramos Gmail e Web usam resolvers independentes, igual ao Android.
         # Isso evita que timeout de Post/Valor bloqueie O Globo/Folha/Estadão/etc.
         self.gmail_resolver=None
+        self.gmail_feed_resolver=None
         self.gmail_batch_resolver=None
         self.web_resolvers=[]
         self.gmail_queue=[]
         self.gmail_sent_counts={}
         self.refresh_generation=0
         self.pending_branches=0
+        self.active_workers=[]
         self.last_pdf=None; self.current_entry=None
         self._build(); self._refresh_list(); self._select_row(0)
 
@@ -96,6 +98,22 @@ class MainWindow(QMainWindow):
     def set_status(self,msg): self.statusBar().showMessage(msg)
     def set_busy(self,b):
         self.progress.setVisible(b); self.refresh_btn.setEnabled(not b); self.pdf_btn.setEnabled(not b)
+
+    def _start_worker(self, worker):
+        """Mantém referência do QRunnable até o sinal final.
+
+        Evita que o wrapper Python/Signals seja coletado antes do callback em
+        builds PyInstaller, algo que pode deixar a UI presa em 'Localizando…'.
+        """
+        self.active_workers.append(worker)
+        def release(*_):
+            try:
+                self.active_workers.remove(worker)
+            except ValueError:
+                pass
+        worker.signals.finished.connect(release)
+        worker.signals.error.connect(release)
+        self.threadpool.start(worker)
 
     def _refresh_list(self):
         row=self.list.currentRow(); self.list.clear()
@@ -173,6 +191,7 @@ class MainWindow(QMainWindow):
         self.gmail_sent_counts = {}
         self.web_resolvers = []
         self.gmail_resolver = None
+        self.gmail_feed_resolver = None
         self.gmail_batch_resolver = None
         self.pending_branches = 2
 
@@ -214,10 +233,16 @@ class MainWindow(QMainWindow):
                 e.status = "Localizando páginas no Gmail…"
         self._refresh_list()
 
-        w = Worker(fetch_matters, url, self.target_date())
-        w.signals.finished.connect(lambda result, g=generation: self._feed_ready(result, g))
-        w.signals.error.connect(lambda msg, g=generation: self._feed_error(msg, g))
-        self.threadpool.start(w)
+        # v1.1.0: o Apps Script é aberto pelo Chromium do próprio aplicativo.
+        # Isso herda proxy/certificados do Windows e elimina a diferença que
+        # fazia o requests ficar preso em "Localizando páginas no Gmail...".
+        self.gmail_feed_resolver = AppsScriptFeedResolver(self)
+        self.gmail_feed_resolver.progress.connect(self.set_status)
+        self.gmail_feed_resolver.completed.connect(
+            lambda matters, meta, g=generation: self._feed_ready((matters, meta), g)
+        )
+        self.gmail_feed_resolver.failed.connect(lambda msg, g=generation: self._feed_error(msg, g))
+        self.gmail_feed_resolver.fetch(url, self.settings.get("access_key", "PC26-8F2D4A7B-31C9E6F0-5A1D"), self.target_date())
 
     def _feed_error(self, msg, generation):
         if generation != self.refresh_generation:
@@ -313,7 +338,7 @@ class MainWindow(QMainWindow):
                 w.signals.error.connect(
                     lambda _m, g=generation, d=done_one: d() if g == self.refresh_generation else None
                 )
-                self.threadpool.start(w)
+                self._start_worker(w)
 
     def _gmail_candidate_batch_ready(self, e, candidate, generation, done_one):
         if generation != self.refresh_generation:
@@ -412,14 +437,15 @@ class MainWindow(QMainWindow):
             if e.name == "THE WASHINGTON POST"
             else "https://www.frontpages.com/valor-economico/"
         )
-        w = Worker(self._download_and_score, url, dest, referer, e.name, e.mastheads, 1)
+        cookie_header = getattr(resolver, "last_cookie_header", "") or ""
+        w = Worker(self._download_and_score, url, dest, referer, e.name, e.mastheads, 1, cookie_header, ANDROID_FRONT_UA)
         w.signals.finished.connect(
             lambda c, en=e, g=generation: self._web_candidate_ready(en, c, g, one_done)
         )
         w.signals.error.connect(
             lambda m, en=e, g=generation: self._web_candidate_error(en, m, g, one_done)
         )
-        self.threadpool.start(w)
+        self._start_worker(w)
 
     def _web_candidate_ready(self, e, candidate, generation, one_done):
         if generation != self.refresh_generation:
@@ -453,8 +479,8 @@ class MainWindow(QMainWindow):
         self._refresh_list()
         one_done()
 
-    def _download_and_score(self, url, dest, referer, name, mastheads, page_number=1):
-        download_image(url, dest, referer)
+    def _download_and_score(self, url, dest, referer, name, mastheads, page_number=1, cookie_header="", user_agent=""):
+        download_image(url, dest, referer, cookie_header=cookie_header, user_agent=user_agent or None)
         score, conf, text = score_candidate(dest, name, mastheads, self.target_date())
         return CandidatePage(dest, score, conf, text, url, page_number)
 
