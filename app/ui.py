@@ -17,7 +17,7 @@ from .newspapers import load_entries
 from .ocr import score_candidate, normalize
 from .pdf_export import export_pdf, build_filename
 from .workers import Worker
-from .web_resolver import Resolver
+from .web_resolver import Resolver, CentralClippingBatchResolver
 
 STYLE = """
 QMainWindow,QWidget{background:#071625;color:#eaf3ff;font-family:'Segoe UI';font-size:13px}
@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         # v1.0.1: os ramos Gmail e Web usam resolvers independentes, igual ao Android.
         # Isso evita que timeout de Post/Valor bloqueie O Globo/Folha/Estadão/etc.
         self.gmail_resolver=None
+        self.gmail_batch_resolver=None
         self.web_resolvers=[]
         self.gmail_queue=[]
         self.gmail_sent_counts={}
@@ -172,6 +173,7 @@ class MainWindow(QMainWindow):
         self.gmail_sent_counts = {}
         self.web_resolvers = []
         self.gmail_resolver = None
+        self.gmail_batch_resolver = None
         self.pending_branches = 2
 
         for e in self.entries:
@@ -231,82 +233,98 @@ class MainWindow(QMainWindow):
         if generation != self.refresh_generation:
             return
         matters, meta = result
-        self.gmail_queue = []
         self.gmail_sent_counts = {}
 
         bridge_version = str((meta or {}).get("version") or "").strip()
         if bridge_version and not (bridge_version.startswith("0.7.5") or bridge_version.startswith("0.7.6")):
             self.set_status(f"Ponte Gmail v{bridge_version}: recomendado Apps Script 0.7.5.x")
 
+        filtered = {}
         for e in self.entries:
             if e.name not in GMAIL_PAPERS:
                 continue
             urls = list(matters.get(e.name, []) or [])[:5]
             self.gmail_sent_counts[e.name] = len(urls)
             if urls:
+                filtered[e.name] = urls
                 e.status = f"Gmail enviou {len(urls)} página(s) • abrindo Ver página…"
-                for i, u in enumerate(urls, 1):
-                    self.gmail_queue.append((e, u, i))
             else:
                 e.status = "Não veio no Gmail • sem usar internet"
 
         self._refresh_list()
-        if not self.gmail_queue:
+        if not filtered:
             self._branch_done(generation)
             return
 
-        # Um resolver exclusivo para Gmail. Ele cria página nova por candidata e
-        # usa geração/token para nenhum timeout antigo interferir no próximo link.
-        self.gmail_resolver = Resolver(self)
-        self.gmail_resolver.progress.connect(self.set_status)
-        self._process_next_gmail(generation)
+        # v1.0.2: porta o CentralClippingWebResolver do Android como um lote único.
+        # Cada link usa uma QWebEngineView NOVA, realmente anexada à janela (fora da tela),
+        # reproduzindo o detalhe que faltava na v1.0.1.
+        self.gmail_batch_resolver = CentralClippingBatchResolver(self)
+        self.gmail_batch_resolver.progress.connect(self.set_status)
+        self.gmail_batch_resolver.completed.connect(
+            lambda covers, errors, g=generation: self._gmail_originals_ready(covers, errors, g)
+        )
+        self.gmail_batch_resolver.resolve(filtered)
 
-    def _process_next_gmail(self, generation):
+    def _gmail_originals_ready(self, covers, errors, generation):
         if generation != self.refresh_generation:
             return
-        if not self.gmail_queue:
+
+        total = 0
+        for e in self.entries:
+            if e.name not in GMAIL_PAPERS:
+                continue
+            urls = list((covers or {}).get(e.name, []) or [])[:5]
+            total += len(urls)
+            sent = self.gmail_sent_counts.get(e.name, 0)
+            if urls:
+                e.status = f"Gmail {sent} recebida(s) • {len(urls)} Ver página resolvida(s) • analisando…"
+            elif sent > 0:
+                e.status = (
+                    f"Gmail enviou {sent} página(s), mas nenhuma imagem original foi aberta • "
+                    "sem usar internet"
+                )
+        self._refresh_list()
+
+        if total <= 0:
             self._finish_gmail_branch(generation)
             return
 
-        e, matter_url, page_number = self.gmail_queue.pop(0)
-        self.set_status(f"{e.name}: abrindo candidata {page_number} do Gmail…")
-        self.gmail_resolver.resolve_original(
-            matter_url,
-            lambda url, err, en=e, ref=matter_url, pg=page_number, g=generation:
-                self._gmail_resolved(en, url, err, ref, pg, g)
-        )
+        pending = {"n": total}
 
-    def _gmail_resolved(self, e, url, err, referer, page_number, generation):
-        if generation != self.refresh_generation:
-            return
-        if not url:
-            # Não derruba o jornal: tenta a próxima das até 5 páginas.
-            self._process_next_gmail(generation)
-            return
+        def done_one():
+            if generation != self.refresh_generation:
+                return
+            pending["n"] -= 1
+            if pending["n"] <= 0:
+                self._finish_gmail_branch(generation)
 
-        ext = ".webp" if ".webp" in url.lower() else ".jpg"
-        dest = cache_dir() / self.target_date().isoformat() / f"{safe_slug(e.name)}-{page_number}{ext}"
-        w = Worker(self._download_and_score, url, dest, referer, e.name, e.mastheads, page_number)
-        w.signals.finished.connect(
-            lambda c, en=e, g=generation: self._gmail_candidate_ready(en, c, g)
-        )
-        w.signals.error.connect(
-            lambda _m, g=generation: self._process_next_gmail(g)
-        )
-        self.threadpool.start(w)
+        for e in self.entries:
+            if e.name not in GMAIL_PAPERS:
+                continue
+            urls = list((covers or {}).get(e.name, []) or [])[:5]
+            for page_number, url in enumerate(urls, 1):
+                ext = ".webp" if ".webp" in url.lower() else ".jpg"
+                dest = cache_dir() / self.target_date().isoformat() / f"{safe_slug(e.name)}-{page_number}{ext}"
+                w = Worker(self._download_and_score, url, dest, "", e.name, e.mastheads, page_number)
+                w.signals.finished.connect(
+                    lambda c, en=e, g=generation, d=done_one: self._gmail_candidate_batch_ready(en, c, g, d)
+                )
+                w.signals.error.connect(
+                    lambda _m, g=generation, d=done_one: d() if g == self.refresh_generation else None
+                )
+                self.threadpool.start(w)
 
-    def _gmail_candidate_ready(self, e, candidate, generation):
+    def _gmail_candidate_batch_ready(self, e, candidate, generation, done_one):
         if generation != self.refresh_generation:
             return
         e.candidates.append(candidate)
-        # Durante a busca, mostra quantas já abriram, mas só escolhe definitivamente
-        # depois de analisar todas, como no Android.
         sent = self.gmail_sent_counts.get(e.name, 0)
         e.status = f"Gmail {sent} recebida(s) • {len(e.candidates)} aberta(s)"
         self._refresh_list()
         if self.current_entry is e:
             self._show_entry()
-        self._process_next_gmail(generation)
+        done_one()
 
     def _finish_gmail_branch(self, generation):
         if generation != self.refresh_generation:
@@ -316,8 +334,6 @@ class MainWindow(QMainWindow):
                 continue
             sent = self.gmail_sent_counts.get(e.name, 0)
             if e.candidates:
-                # Igual ao Android: preserva a ordem original 1..5 para o botão
-                # Anterior/Próxima e apenas aponta chosen_index para a melhor.
                 best_index = max(
                     range(len(e.candidates)),
                     key=lambda i: (e.candidates[i].score, -e.candidates[i].page_number),

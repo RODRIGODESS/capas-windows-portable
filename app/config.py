@@ -9,6 +9,7 @@ GMAIL_PAPERS = {
     "CORREIO BRAZILIENSE", "ESTADO DE MINAS", "THE NEW YORK TIMES"
 }
 WEB_PAPERS = {"VALOR ECONÔMICO", "THE WASHINGTON POST"}
+BUNDLED_URL_VERSION = "1.0.2"
 
 
 def bundle_dir() -> Path:
@@ -56,15 +57,29 @@ def settings_path() -> Path:
 
 def load_settings() -> dict:
     p = settings_path()
+    d = {}
     if p.exists():
         try:
-            d = json.loads(p.read_text(encoding="utf-8"))
-            if isinstance(d, dict):
-                d.setdefault("apps_script_url", APPS_SCRIPT_URL)
-                return d
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                d = raw
+        except Exception:
+            d = {}
+
+    # Mesmo comportamento do Android v0.7.5.4+: ao migrar para uma versão
+    # nova do endereço embutido, aplica o /exec oficial uma única vez. Depois
+    # disso o usuário ainda pode alterar manualmente pelo botão Apps Script.
+    if d.get("bundled_url_version") != BUNDLED_URL_VERSION:
+        d["apps_script_url"] = APPS_SCRIPT_URL
+        d["bundled_url_version"] = BUNDLED_URL_VERSION
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
-    return {"apps_script_url": APPS_SCRIPT_URL}
+    else:
+        d.setdefault("apps_script_url", APPS_SCRIPT_URL)
+    return d
 
 
 def save_settings(settings: dict):
