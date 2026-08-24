@@ -494,10 +494,39 @@ class MainWindow(QMainWindow):
 
     def generate_pdf(self):
         try:
-            p=export_pdf(self.entries,self.target_date()); self.last_pdf=p; QMessageBox.information(self,"PDF gerado",f"PDF salvo em:\n{p}")
-        except Exception as e: QMessageBox.critical(self,"Erro ao gerar PDF",str(e))
+            p = export_pdf(self.entries, self.target_date())
+            self.last_pdf = p
+
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setWindowTitle("PDF gerado")
+            box.setText("PDF gerado com sucesso.")
+            box.setInformativeText(f"Salvo em:\n{p}")
+
+            open_pdf_btn = box.addButton("ABRIR PDF", QMessageBox.ButtonRole.AcceptRole)
+            open_folder_btn = box.addButton("ABRIR PASTA", QMessageBox.ButtonRole.ActionRole)
+            box.addButton("FECHAR", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+
+            clicked = box.clickedButton()
+            if clicked is open_pdf_btn:
+                self.open_pdf()
+            elif clicked is open_folder_btn:
+                self.open_pdf_folder(p)
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao gerar PDF", str(e))
 
     def open_pdf(self):
-        p=self.last_pdf or (downloads_dir()/build_filename(self.target_date()))
-        if not Path(p).exists(): QMessageBox.warning(self,"PDF","Nenhum PDF encontrado para a data selecionada."); return
+        p = self.last_pdf or (downloads_dir() / build_filename(self.target_date()))
+        if not Path(p).exists():
+            QMessageBox.warning(self, "PDF", "Nenhum PDF encontrado para a data selecionada.")
+            return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
+
+    def open_pdf_folder(self, pdf_path=None):
+        p = Path(pdf_path or self.last_pdf or (downloads_dir() / build_filename(self.target_date())))
+        folder = p.parent if p.suffix.lower() == ".pdf" else p
+        if not folder.exists():
+            QMessageBox.warning(self, "Pasta do PDF", "A pasta do PDF não foi encontrada.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))

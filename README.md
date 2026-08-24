@@ -1,4 +1,4 @@
-# Principais Capas — Windows Portable v1.1.0 FULL ANDROID PORT
+# Principais Capas — Windows Portable v1.1.1 FULL ANDROID PORT
 
 Esta versão foi reconstruída a partir da base Android **v0.7.5.9** com portabilidade módulo a módulo, em vez de apenas reproduzir visualmente o fluxo.
 
@@ -6,7 +6,7 @@ Esta versão foi reconstruída a partir da base Android **v0.7.5.9** com portabi
 
 A v1.0.x ficava presa em `Localizando páginas no Gmail...` porque a ponte Apps Script era consultada por `requests`, enquanto a navegação de Valor/Post usava Chromium. Em alguns Windows/proxies corporativos essas duas pilhas de rede não se comportam igual.
 
-Na v1.1.0 o Apps Script também é consultado pelo Chromium interno do aplicativo, com User-Agent e fluxo equivalentes ao Android. Há timeout explícito de 32 s; o estado não pode ficar indefinidamente em “Localizando”.
+Na v1.1.1 o Apps Script também é consultado pelo Chromium interno do aplicativo, com User-Agent e fluxo equivalentes ao Android. Há timeout explícito de 32 s; o estado não pode ficar indefinidamente em “Localizando”.
 
 ## Paridade com Android
 
@@ -25,4 +25,15 @@ Veja `docs/ANDROID-PARITY-MAP.md`.
 
 ## Build / Release
 
-O GitHub Actions gera o portable em `windows-latest` e publica diretamente em **GitHub Releases** com a tag `windows-v1.1.0`.
+O GitHub Actions gera o portable em `windows-latest` e publica diretamente em **GitHub Releases** com a tag `windows-v1.1.1`.
+
+
+## v1.1.1 - Pós-geração do PDF
+
+Ao concluir a geração do PDF, o aplicativo agora oferece três opções:
+
+- **ABRIR PDF** — abre o PDF gerado.
+- **ABRIR PASTA** — abre diretamente a pasta onde o PDF foi salvo.
+- **FECHAR** — fecha a confirmação e mantém o aplicativo aberto.
+
+Esta versão foi criada diretamente sobre a v1.1.0 funcional e não altera os motores de Gmail/Apps Script, Central Clipping, Valor Econômico, Washington Post, OCR, ranking das candidatas ou geração do conteúdo do PDF.
