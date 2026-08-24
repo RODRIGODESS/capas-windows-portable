@@ -9,6 +9,7 @@ class CandidatePage:
     confidence: int = 0
     recognized_text: str = ""
     source_url: str = ""
+    page_number: int = 1
 
 @dataclass
 class CoverEntry:

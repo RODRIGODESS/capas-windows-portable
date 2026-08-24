@@ -14,7 +14,7 @@ from .config import bundle_dir, cache_dir, downloads_dir, GMAIL_PAPERS, WEB_PAPE
 from .models import CandidatePage
 from .network import fetch_matters, download_image, safe_slug
 from .newspapers import load_entries
-from .ocr import score_candidate
+from .ocr import score_candidate, normalize
 from .pdf_export import export_pdf, build_filename
 from .workers import Worker
 from .web_resolver import Resolver
@@ -49,8 +49,15 @@ class MainWindow(QMainWindow):
         self.resize(1320,820); self.setMinimumSize(1050,680)
         self.setStyleSheet(STYLE)
         self.entries=load_entries(); self.settings=load_settings(); self.threadpool=QThreadPool.globalInstance()
-        self.resolver=Resolver(self); self.resolver.progress.connect(self.set_status)
-        self.queue=[]; self.last_pdf=None; self.current_entry=None
+        # v1.0.1: os ramos Gmail e Web usam resolvers independentes, igual ao Android.
+        # Isso evita que timeout de Post/Valor bloqueie O Globo/Folha/Estadão/etc.
+        self.gmail_resolver=None
+        self.web_resolvers=[]
+        self.gmail_queue=[]
+        self.gmail_sent_counts={}
+        self.refresh_generation=0
+        self.pending_branches=0
+        self.last_pdf=None; self.current_entry=None
         self._build(); self._refresh_list(); self._select_row(0)
 
     def _build(self):
@@ -152,66 +159,296 @@ class MainWindow(QMainWindow):
         if dlg.exec(): self.settings["apps_script_url"]=edit.text().strip(); save_settings(self.settings); QMessageBox.information(self,"Apps Script","URL salva.")
 
     def refresh_all(self):
-        self.set_busy(True); self.set_status("Consultando Gmail / Apps Script…")
+        """Mesmo desenho de execução do Android v0.7.5.9.
+
+        Ramo 1: Gmail/Apps Script -> até 5 Leia mais -> Ver página -> original_page.
+        Ramo 2: Valor/Post em paralelo, sem esperar o Gmail.
+        """
+        self.refresh_generation += 1
+        generation = self.refresh_generation
+        self.set_busy(True)
+        self.set_status("Atualizando capas…")
+        self.gmail_queue = []
+        self.gmail_sent_counts = {}
+        self.web_resolvers = []
+        self.gmail_resolver = None
+        self.pending_branches = 2
+
         for e in self.entries:
-            e.status="Aguardando"; e.candidates=[]; e.chosen_index=-1; e.manual_path=None
+            e.status = "Aguardando"
+            e.candidates = []
+            e.chosen_index = -1
+            e.automatic_index = -1
+            e.automatic_status = ""
+            e.manual_path = None
         self._refresh_list()
-        w=Worker(fetch_matters,self.settings.get("apps_script_url",""),self.target_date()); w.signals.finished.connect(self._feed_ready); w.signals.error.connect(self._feed_error); self.threadpool.start(w)
 
-    def _feed_error(self,msg):
-        # Ainda tenta Valor/Post, porque são fontes independentes do Gmail.
-        self.set_status("Gmail: "+msg); self.queue=[]; self._enqueue_web_papers(); self._process_queue()
+        # Igual ao Android: os dois ramos iniciam imediatamente.
+        self._start_web_branch(generation)
+        self._start_gmail_branch(generation)
 
-    def _feed_ready(self,result):
-        matters,meta=result; self.queue=[]
+    def _branch_done(self, generation):
+        if generation != self.refresh_generation:
+            return
+        self.pending_branches -= 1
+        if self.pending_branches <= 0:
+            self._finalize_refresh(generation)
+
+    # ---------------- Gmail / Apps Script ----------------
+    def _start_gmail_branch(self, generation):
+        if generation != self.refresh_generation:
+            return
+        url = self.settings.get("apps_script_url", "").strip()
+        if not url:
+            for e in self.entries:
+                if e.name in GMAIL_PAPERS:
+                    e.status = "Gmail automático não configurado • sem usar internet"
+            self._refresh_list()
+            self._branch_done(generation)
+            return
+
         for e in self.entries:
             if e.name in GMAIL_PAPERS:
-                urls=matters.get(e.name,[])[:5]
-                if not urls:e.status="Gmail: nenhuma página recebida"
-                for i,u in enumerate(urls): self.queue.append(("gmail",e,u,i+1))
-        self._enqueue_web_papers(); self._process_queue()
+                e.status = "Localizando páginas no Gmail…"
+        self._refresh_list()
 
-    def _enqueue_web_papers(self):
+        w = Worker(fetch_matters, url, self.target_date())
+        w.signals.finished.connect(lambda result, g=generation: self._feed_ready(result, g))
+        w.signals.error.connect(lambda msg, g=generation: self._feed_error(msg, g))
+        self.threadpool.start(w)
+
+    def _feed_error(self, msg, generation):
+        if generation != self.refresh_generation:
+            return
         for e in self.entries:
-            if e.name=="VALOR ECONÔMICO" and self.target_date().weekday()>=5:
-                e.status="Sem edição regular no fim de semana"; continue
-            if e.name=="VALOR ECONÔMICO": self.queue.insert(0,("front",e,"valor-economico",1))
-            elif e.name=="THE WASHINGTON POST": self.queue.insert(0,("front",e,"the-washington-post",1))
+            if e.name in GMAIL_PAPERS:
+                e.status = f"Gmail: {msg} • sem usar internet"
+        self._refresh_list()
+        self.set_status("Gmail: " + msg)
+        self._branch_done(generation)
 
-    def _process_queue(self):
-        if not self.queue:
-            self._finalize_refresh(); return
-        kind,e,value,idx=self.queue.pop(0)
-        if kind=="gmail":
-            self.set_status(f"{e.name}: abrindo candidata {idx}…")
-            self.resolver.resolve_original(value, lambda url,err:self._resolved_url(e,url,err,value,idx))
-        else:
-            self.set_status(f"{e.name}: buscando capa atual…")
-            self.resolver.resolve_frontpages(value, lambda url,err:self._resolved_url(e,url,err,f"https://www.frontpages.com/{value}/",idx))
+    def _feed_ready(self, result, generation):
+        if generation != self.refresh_generation:
+            return
+        matters, meta = result
+        self.gmail_queue = []
+        self.gmail_sent_counts = {}
 
-    def _resolved_url(self,e,url,err,referer,idx):
+        bridge_version = str((meta or {}).get("version") or "").strip()
+        if bridge_version and not (bridge_version.startswith("0.7.5") or bridge_version.startswith("0.7.6")):
+            self.set_status(f"Ponte Gmail v{bridge_version}: recomendado Apps Script 0.7.5.x")
+
+        for e in self.entries:
+            if e.name not in GMAIL_PAPERS:
+                continue
+            urls = list(matters.get(e.name, []) or [])[:5]
+            self.gmail_sent_counts[e.name] = len(urls)
+            if urls:
+                e.status = f"Gmail enviou {len(urls)} página(s) • abrindo Ver página…"
+                for i, u in enumerate(urls, 1):
+                    self.gmail_queue.append((e, u, i))
+            else:
+                e.status = "Não veio no Gmail • sem usar internet"
+
+        self._refresh_list()
+        if not self.gmail_queue:
+            self._branch_done(generation)
+            return
+
+        # Um resolver exclusivo para Gmail. Ele cria página nova por candidata e
+        # usa geração/token para nenhum timeout antigo interferir no próximo link.
+        self.gmail_resolver = Resolver(self)
+        self.gmail_resolver.progress.connect(self.set_status)
+        self._process_next_gmail(generation)
+
+    def _process_next_gmail(self, generation):
+        if generation != self.refresh_generation:
+            return
+        if not self.gmail_queue:
+            self._finish_gmail_branch(generation)
+            return
+
+        e, matter_url, page_number = self.gmail_queue.pop(0)
+        self.set_status(f"{e.name}: abrindo candidata {page_number} do Gmail…")
+        self.gmail_resolver.resolve_original(
+            matter_url,
+            lambda url, err, en=e, ref=matter_url, pg=page_number, g=generation:
+                self._gmail_resolved(en, url, err, ref, pg, g)
+        )
+
+    def _gmail_resolved(self, e, url, err, referer, page_number, generation):
+        if generation != self.refresh_generation:
+            return
         if not url:
-            if not e.candidates:e.status=f"Falha: {err}"; self._refresh_list(); self._process_queue(); return
-        ext=".webp" if ".webp" in url.lower() else ".jpg"; dest=cache_dir()/self.target_date().isoformat()/f"{safe_slug(e.name)}-{idx}{ext}"
-        w=Worker(self._download_and_score,url,dest,referer,e.name,e.mastheads)
-        w.signals.finished.connect(lambda c,en=e:self._candidate_ready(en,c)); w.signals.error.connect(lambda m,en=e:self._candidate_error(en,m)); self.threadpool.start(w)
+            # Não derruba o jornal: tenta a próxima das até 5 páginas.
+            self._process_next_gmail(generation)
+            return
 
-    def _download_and_score(self,url,dest,referer,name,mastheads):
-        download_image(url,dest,referer); score,conf,text=score_candidate(dest,name,mastheads); return CandidatePage(dest,score,conf,text,url)
+        ext = ".webp" if ".webp" in url.lower() else ".jpg"
+        dest = cache_dir() / self.target_date().isoformat() / f"{safe_slug(e.name)}-{page_number}{ext}"
+        w = Worker(self._download_and_score, url, dest, referer, e.name, e.mastheads, page_number)
+        w.signals.finished.connect(
+            lambda c, en=e, g=generation: self._gmail_candidate_ready(en, c, g)
+        )
+        w.signals.error.connect(
+            lambda _m, g=generation: self._process_next_gmail(g)
+        )
+        self.threadpool.start(w)
 
-    def _candidate_ready(self,e,c):
-        e.candidates.append(c); e.candidates.sort(key=lambda x:x.score,reverse=True); e.chosen_index=0; e.automatic_index=0; best=e.candidates[0]; e.status=f"{len(e.candidates)} candidata(s) aberta(s) • confiança {best.confidence}%"; self._refresh_list(); self._show_entry(); self._process_queue()
+    def _gmail_candidate_ready(self, e, candidate, generation):
+        if generation != self.refresh_generation:
+            return
+        e.candidates.append(candidate)
+        # Durante a busca, mostra quantas já abriram, mas só escolhe definitivamente
+        # depois de analisar todas, como no Android.
+        sent = self.gmail_sent_counts.get(e.name, 0)
+        e.status = f"Gmail {sent} recebida(s) • {len(e.candidates)} aberta(s)"
+        self._refresh_list()
+        if self.current_entry is e:
+            self._show_entry()
+        self._process_next_gmail(generation)
 
-    def _candidate_error(self,e,msg):
-        if not e.candidates:e.status="Falha ao baixar capa: "+msg
-        self._refresh_list(); self._process_queue()
-
-    def _finalize_refresh(self):
-        self.set_busy(False); self.set_status("Atualização concluída")
+    def _finish_gmail_branch(self, generation):
+        if generation != self.refresh_generation:
+            return
         for e in self.entries:
+            if e.name not in GMAIL_PAPERS:
+                continue
+            sent = self.gmail_sent_counts.get(e.name, 0)
             if e.candidates:
-                e.candidates.sort(key=lambda x:x.score,reverse=True); e.chosen_index=0; e.automatic_index=0; e.status=f"Candidata 1/{len(e.candidates)} escolhida • confiança {e.candidates[0].confidence}%"
-        self._refresh_list(); self._show_entry()
+                # Igual ao Android: preserva a ordem original 1..5 para o botão
+                # Anterior/Próxima e apenas aponta chosen_index para a melhor.
+                best_index = max(
+                    range(len(e.candidates)),
+                    key=lambda i: (e.candidates[i].score, -e.candidates[i].page_number),
+                )
+                e.chosen_index = best_index
+                e.automatic_index = best_index
+                best = e.candidates[best_index]
+                e.automatic_status = (
+                    f"Gmail • candidata {best.page_number}/{max(1, sent)} escolhida • "
+                    f"confiança {best.confidence}% • Gmail {sent} recebida(s) / {len(e.candidates)} aberta(s)"
+                )
+                e.status = e.automatic_status
+            elif sent > 0:
+                e.status = (
+                    f"Gmail enviou {sent} página(s), mas nenhuma imagem original foi aberta • "
+                    "sem usar internet"
+                )
+        self._refresh_list()
+        self._show_entry()
+        self._branch_done(generation)
+
+    # ---------------- Valor / Washington Post ----------------
+    def _start_web_branch(self, generation):
+        if generation != self.refresh_generation:
+            return
+        web_entries = []
+        for e in self.entries:
+            if e.name == "VALOR ECONÔMICO":
+                if self.target_date().weekday() >= 5:
+                    e.status = "Sem edição regular no fim de semana"
+                else:
+                    e.status = "Buscando a capa exibida atualmente no link…"
+                    web_entries.append(e)
+            elif e.name == "THE WASHINGTON POST":
+                e.status = "Buscando a capa exibida atualmente no link…"
+                web_entries.append(e)
+        self._refresh_list()
+
+        if not web_entries:
+            self._branch_done(generation)
+            return
+
+        pending = {"n": len(web_entries)}
+
+        def one_done():
+            if generation != self.refresh_generation:
+                return
+            pending["n"] -= 1
+            if pending["n"] <= 0:
+                self._branch_done(generation)
+
+        for e in web_entries:
+            # Resolver separado por jornal -> Post e Valor realmente paralelos.
+            resolver = Resolver(self)
+            resolver.progress.connect(self.set_status)
+            self.web_resolvers.append(resolver)
+            resolver.resolve_frontpages(
+                e.name,
+                lambda url, err, en=e, r=resolver, g=generation:
+                    self._web_resolved(en, r, url, err, g, one_done)
+            )
+
+    def _web_resolved(self, e, resolver, url, err, generation, one_done):
+        if generation != self.refresh_generation:
+            return
+        if not url:
+            e.status = f"Falha: Capa correta não confirmada para {e.name} ({err})"
+            self._refresh_list()
+            one_done()
+            return
+
+        ext = ".webp" if ".webp" in url.lower() else ".jpg"
+        dest = cache_dir() / self.target_date().isoformat() / f"{safe_slug(e.name)}-web{ext}"
+        referer = resolver.last_referer or (
+            "https://www.frontpages.com/the-washington-post/"
+            if e.name == "THE WASHINGTON POST"
+            else "https://www.frontpages.com/valor-economico/"
+        )
+        w = Worker(self._download_and_score, url, dest, referer, e.name, e.mastheads, 1)
+        w.signals.finished.connect(
+            lambda c, en=e, g=generation: self._web_candidate_ready(en, c, g, one_done)
+        )
+        w.signals.error.connect(
+            lambda m, en=e, g=generation: self._web_candidate_error(en, m, g, one_done)
+        )
+        self.threadpool.start(w)
+
+    def _web_candidate_ready(self, e, candidate, generation, one_done):
+        if generation != self.refresh_generation:
+            return
+        # Segurança extra igual ao Android: nunca aceitar Washington Post SPORTS.
+        if e.name == "THE WASHINGTON POST" and "WASHINGTON POST SPORTS" in normalize(candidate.recognized_text):
+            try:
+                candidate.path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            e.status = "Falha: edição SPORTS rejeitada"
+            self._refresh_list()
+            one_done()
+            return
+
+        e.candidates = [candidate]
+        e.chosen_index = 0
+        e.automatic_index = 0
+        source = "frontpages.com" if "frontpages.com" in candidate.source_url.lower() else "PressReader"
+        e.status = f"Capa exibida atualmente no link • fonte {source} • confiança {candidate.confidence}%"
+        e.automatic_status = e.status
+        self._refresh_list()
+        if self.current_entry is e:
+            self._show_entry()
+        one_done()
+
+    def _web_candidate_error(self, e, msg, generation, one_done):
+        if generation != self.refresh_generation:
+            return
+        e.status = f"Falha ao baixar capa: {msg}"
+        self._refresh_list()
+        one_done()
+
+    def _download_and_score(self, url, dest, referer, name, mastheads, page_number=1):
+        download_image(url, dest, referer)
+        score, conf, text = score_candidate(dest, name, mastheads, self.target_date())
+        return CandidatePage(dest, score, conf, text, url, page_number)
+
+    def _finalize_refresh(self, generation=None):
+        if generation is not None and generation != self.refresh_generation:
+            return
+        self.set_busy(False)
+        self.set_status("Atualização concluída")
+        self._refresh_list()
+        self._show_entry()
 
     def generate_pdf(self):
         try:
