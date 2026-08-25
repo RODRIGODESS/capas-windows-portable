@@ -129,11 +129,12 @@ def matches_expected(text: str, name: str) -> bool:
     if "FOLHA" in expected:
         return "FOLHA" in t and ("PAULO" in t or "S PAULO" in t)
     if "ESTADAO" in expected:
+        # "FUNDADO EM 1875" sozinho não identifica a capa: a frase também
+        # aparece no cabeçalho de páginas internas. Exigimos o nome do jornal.
         return (
             "ESTADAO" in t
             or ("ESTADO" in t and "S PAULO" in t)
             or ("ESTADO" in t and "SAO PAULO" in t)
-            or "FUNDADO EM 1875" in t
         )
     if "CORREIO BRAZILIENSE" in expected:
         return "CORREIO" in t and "BRAZILIENSE" in t
@@ -146,6 +147,23 @@ def matches_expected(text: str, name: str) -> bool:
     if "VALOR ECONOMICO" in expected:
         return "VALOR" in t
     return bool(expected and expected in t)
+
+
+def contains_exact_estadao_masthead(text: str) -> bool:
+    t = normalize(text)
+    return (
+        "O ESTADO DE S PAULO" in t
+        or "O ESTADO DE SAO PAULO" in t
+        or "ESTADAO" in t
+    )
+
+
+def is_internal_page_header_line(text: str) -> bool:
+    t = normalize(text).strip()
+    if not t:
+        return False
+    # Marcadores típicos de páginas/seções internas: A2, A3, A12, B4 etc.
+    return re.match(r"^(A|B|C|D)\s?\d{1,2}(\s.*)?$", t) is not None
 
 
 def _contains_ad(text: str) -> bool:
@@ -177,7 +195,7 @@ def _date_matches(text: str, target_date: date | None) -> bool:
 
 
 def score_candidate(path: Path, name: str, mastheads: list[str], target_date: date | None = None) -> tuple[int, int, str]:
-    """Port fiel de ClippingImageScanner.scoreCandidate (Android v0.7.5.9)."""
+    """Port fiel de ClippingImageScanner.scoreCandidate (Android v0.7.6.1)."""
     try:
         with Image.open(path) as orig:
             ow, oh = orig.size
@@ -190,6 +208,7 @@ def score_candidate(path: Path, name: str, mastheads: list[str], target_date: da
     full = normalize(raw)
     top20 = []; top35 = []; top50 = []
     masthead_strength = 0
+    internal_page_marker_top = False
     h = max(1, h); w = max(1, w)
 
     for line in lines:
@@ -198,6 +217,8 @@ def score_candidate(path: Path, name: str, mastheads: list[str], target_date: da
         if center_y <= 0.20: top20.append(line_text)
         if center_y <= 0.35: top35.append(line_text)
         if center_y <= 0.50: top50.append(line_text)
+        if center_y <= 0.20 and is_internal_page_header_line(line_text):
+            internal_page_marker_top = True
         if matches_expected(line_text, name) and center_y <= 0.32:
             height_frac = line["height"] / h
             width_frac = line["width"] / w
@@ -235,6 +256,28 @@ def score_candidate(path: Path, name: str, mastheads: list[str], target_date: da
     if other: score -= 70
     ad = _contains_ad(full)
     if ad: score -= 10 if expected20 else 35
+
+    # v1.1.3 / Android v0.7.6.1 — ESTADÃO:
+    # "FUNDADO EM 1875" também aparece em páginas internas e não pode valer
+    # como masthead por si só. A capa recebe bônus quando o cabeçalho completo
+    # O ESTADO DE S. PAULO aparece no topo e a data selecionada está presente.
+    # Marcadores internos A2/A3/A12/B4... no topo derrubam a candidata.
+    estadao = "ESTADAO" in normalize(name)
+    if estadao:
+        exact_estadao_top = contains_exact_estadao_masthead(t35)
+        target_date_present = _date_matches(full, target_date)
+        founder_only = "FUNDADO EM 1875" in full and not exact_estadao_top
+
+        if exact_estadao_top and target_date_present:
+            score += 28
+        elif exact_estadao_top:
+            score += 14
+
+        if founder_only:
+            score = min(score, 62)
+        if internal_page_marker_top:
+            score -= 45
+            score = min(score, 55)
 
     nyt = "NEW YORK TIMES" in normalize(name)
     nyt_company_only = nyt and "THE NEW YORK TIMES COMPANY" in full and not is_strong_nyt_masthead(t20)

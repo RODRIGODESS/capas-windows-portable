@@ -1,4 +1,4 @@
-# Principais Capas — Windows Portable v1.1.2 FULL ANDROID PORT
+# Principais Capas — Windows Portable v1.1.3 ESTADÃO COVER RANKING FIX
 
 Esta versão foi reconstruída a partir da base Android **v0.7.5.9** com portabilidade módulo a módulo, em vez de apenas reproduzir visualmente o fluxo.
 
@@ -6,7 +6,7 @@ Esta versão foi reconstruída a partir da base Android **v0.7.5.9** com portabi
 
 A v1.0.x ficava presa em `Localizando páginas no Gmail...` porque a ponte Apps Script era consultada por `requests`, enquanto a navegação de Valor/Post usava Chromium. Em alguns Windows/proxies corporativos essas duas pilhas de rede não se comportam igual.
 
-Na v1.1.2 o Apps Script também é consultado pelo Chromium interno do aplicativo, com User-Agent e fluxo equivalentes ao Android. Há timeout explícito de 32 s; o estado não pode ficar indefinidamente em “Localizando”.
+Na base v1.1.2 o Apps Script também é consultado pelo Chromium interno do aplicativo, com User-Agent e fluxo equivalentes ao Android. Há timeout explícito de 32 s; o estado não pode ficar indefinidamente em “Localizando”.
 
 ## Paridade com Android
 
@@ -25,7 +25,7 @@ Veja `docs/ANDROID-PARITY-MAP.md`.
 
 ## Build / Release
 
-O GitHub Actions gera o portable em `windows-latest` e publica diretamente em **GitHub Releases** com a tag `windows-v1.1.2`.
+O GitHub Actions gera o portable em `windows-latest` e publica diretamente em **GitHub Releases** com a tag `windows-v1.1.3`.
 
 
 ## v1.1.1 - Pós-geração do PDF
@@ -48,3 +48,16 @@ Esta versão foi criada diretamente sobre a v1.1.0 funcional e não altera os mo
 - O ranking automático escolhe somente entre imagens realmente abertas.
 - Anterior/Próxima navegam sem alterar a capa escolhida até clicar em **USAR ESTA PÁGINA**.
 - Motor Gmail, Valor, Washington Post e PDF da v1.1.1 foram preservados.
+
+
+## v1.1.3 - Correção de seleção automática do Estadão
+
+Esta versão espelha no Windows a correção aplicada ao Android v0.7.6.1:
+
+- `FUNDADO EM 1875` sozinho não é mais tratado como masthead do Estadão.
+- `O ESTADO DE S. PAULO` no topo + a data selecionada recebe prioridade forte.
+- Marcadores de página interna como `A2`, `A3`, `A12`, `B4` no cabeçalho reduzem a confiança.
+- As 5 candidatas recebidas do Gmail continuam disponíveis em revisão.
+- Nenhuma alteração foi feita no Apps Script, Valor, Washington Post, PDF ou inserção manual.
+
+A partir desta versão, correções funcionais do projeto devem ser aplicadas em paralelo às versões Android e Windows, preservando as particularidades de cada plataforma.

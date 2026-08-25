@@ -19,3 +19,10 @@ O Android usa `HttpURLConnection` e `WebView`. No Windows, a rede do Apps Script
 
 ### v1.1.2
 A fila de revisão Windows preserva os 5 slots recebidos do Apps Script. O ranking não remove candidatos da revisão.
+
+
+### v1.1.3 / Android v0.7.6.1
+- `ClippingImageScanner.matchesExpected` (Estadão) ↔ `app/ocr.py::matches_expected`
+- `containsExactEstadaoMasthead` ↔ `contains_exact_estadao_masthead`
+- `isInternalPageHeaderLine` ↔ `is_internal_page_header_line`
+- Bônus de masthead + data e penalização A2/A3/A12/B4 portados com os mesmos valores.
