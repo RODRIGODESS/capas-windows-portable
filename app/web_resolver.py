@@ -360,11 +360,11 @@ class CentralClippingBatchResolver(QObject):
         super().__init__(parent)
         self.browser = _AttachedBrowser(parent or self, ANDROID_GMAIL_UA)
         self.browser.interceptor.captured.connect(self._intercepted)
-        self.jobs: list[tuple[str, str]] = []
+        self.jobs: list[tuple[str, str, int]] = []
         self.resolved: OrderedDict[str, list[str]] = OrderedDict()
         self.errors: list[str] = []
         self.job_index = 0
-        self.current_job: Optional[tuple[str, str]] = None
+        self.current_job: Optional[tuple[str, str, int]] = None
         self.generation = 0
         self.probe_count = 0
         self.page: Optional[CapturePage] = None
@@ -376,12 +376,13 @@ class CentralClippingBatchResolver(QObject):
             if name in ("VALOR ECONÔMICO", "THE WASHINGTON POST"):
                 continue
             n = 0
+            self.resolved.setdefault(name, [])
             for u in (urls or []):
                 u = (u or "").strip()
                 if not u:
                     continue
-                self.jobs.append((name, u))
                 n += 1
+                self.jobs.append((name, u, n))
                 if n >= self.MAX_MATTERS_PER_PAPER:
                     break
         self._start_next_job()
@@ -391,9 +392,9 @@ class CentralClippingBatchResolver(QObject):
         while self.job_index < len(self.jobs):
             job = self.jobs[self.job_index]
             self.job_index += 1
-            name, url = job
-            if len(self.resolved.get(name, [])) >= self.MAX_ORIGINALS_PER_PAPER:
-                continue
+            name, url, page_number = job
+            # Mantemos um slot por item recebido do Apps Script. Não deduplicamos
+            # páginas aqui: se o Gmail enviou 5 matérias, a revisão terá 5 posições.
             self.current_job = job
             self.probe_count = 0
             self.generation += 1
@@ -448,13 +449,15 @@ class CentralClippingBatchResolver(QObject):
     def _success(self, url: str, generation: int):
         if not self._active(generation) or not self.current_job:
             return
-        name, _ = self.current_job
+        name, _matter_url, page_number = self.current_job
         clean = _cleanup(url)
         if not _is_original(clean):
             return
         arr = self.resolved.setdefault(name, [])
-        if clean not in arr and len(arr) < self.MAX_ORIGINALS_PER_PAPER:
-            arr.append(clean)
+        # NÃO deduplicar. Dois links do clipping podem apontar para a mesma página
+        # física, mas o usuário pediu que todas as 5 posições recebidas sejam
+        # visíveis na revisão.
+        arr.append({"page_number": page_number, "url": clean, "error": ""})
         self.generation += 1
         self.current_job = None
         self._start_next_job()
@@ -462,7 +465,14 @@ class CentralClippingBatchResolver(QObject):
     def _timeout(self, generation: int, name: str):
         if not self._active(generation):
             return
-        self.errors.append(f"{name}: Ver página não localizado no link exato")
+        _name, _matter_url, page_number = self.current_job
+        msg = f"{name}: candidata {page_number}: Ver página não localizado no link exato"
+        self.errors.append(msg)
+        # Preserva também a posição que não abriu. Assim 5 recebidas continuam
+        # aparecendo como 5 na revisão, com diagnóstico no slot correspondente.
+        self.resolved.setdefault(name, []).append({
+            "page_number": page_number, "url": "", "error": msg
+        })
         self.generation += 1
         self.current_job = None
         self._start_next_job()
@@ -472,7 +482,10 @@ class CentralClippingBatchResolver(QObject):
 
     def _finish(self):
         self.browser.destroy_page()
-        self.completed.emit(dict(self.resolved), list(self.errors))
+        ordered = {}
+        for name, items in self.resolved.items():
+            ordered[name] = sorted(items, key=lambda x: int(x.get("page_number", 999)))[:self.MAX_ORIGINALS_PER_PAPER]
+        self.completed.emit(ordered, list(self.errors))
 
 
 class FrontPageResolver(QObject):

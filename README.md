@@ -1,4 +1,4 @@
-# Principais Capas — Windows Portable v1.1.1 FULL ANDROID PORT
+# Principais Capas — Windows Portable v1.1.2 FULL ANDROID PORT
 
 Esta versão foi reconstruída a partir da base Android **v0.7.5.9** com portabilidade módulo a módulo, em vez de apenas reproduzir visualmente o fluxo.
 
@@ -6,7 +6,7 @@ Esta versão foi reconstruída a partir da base Android **v0.7.5.9** com portabi
 
 A v1.0.x ficava presa em `Localizando páginas no Gmail...` porque a ponte Apps Script era consultada por `requests`, enquanto a navegação de Valor/Post usava Chromium. Em alguns Windows/proxies corporativos essas duas pilhas de rede não se comportam igual.
 
-Na v1.1.1 o Apps Script também é consultado pelo Chromium interno do aplicativo, com User-Agent e fluxo equivalentes ao Android. Há timeout explícito de 32 s; o estado não pode ficar indefinidamente em “Localizando”.
+Na v1.1.2 o Apps Script também é consultado pelo Chromium interno do aplicativo, com User-Agent e fluxo equivalentes ao Android. Há timeout explícito de 32 s; o estado não pode ficar indefinidamente em “Localizando”.
 
 ## Paridade com Android
 
@@ -25,7 +25,7 @@ Veja `docs/ANDROID-PARITY-MAP.md`.
 
 ## Build / Release
 
-O GitHub Actions gera o portable em `windows-latest` e publica diretamente em **GitHub Releases** com a tag `windows-v1.1.1`.
+O GitHub Actions gera o portable em `windows-latest` e publica diretamente em **GitHub Releases** com a tag `windows-v1.1.2`.
 
 
 ## v1.1.1 - Pós-geração do PDF
@@ -37,3 +37,14 @@ Ao concluir a geração do PDF, o aplicativo agora oferece três opções:
 - **FECHAR** — fecha a confirmação e mantém o aplicativo aberto.
 
 Esta versão foi criada diretamente sobre a v1.1.0 funcional e não altera os motores de Gmail/Apps Script, Central Clipping, Valor Econômico, Washington Post, OCR, ranking das candidatas ou geração do conteúdo do PDF.
+
+
+## v1.1.2 - Mostrar todas as páginas recebidas do Gmail
+
+- Se o Apps Script enviar 5 páginas, a revisão mostra **5 de 5**, sem esconder candidatas por pontuação.
+- Removida a deduplicação de `original_page`: cada item recebido mantém sua própria posição.
+- A ordem original 1..5 do Gmail é preservada.
+- Se uma imagem não conseguir abrir, o slot continua visível com diagnóstico em vez de desaparecer.
+- O ranking automático escolhe somente entre imagens realmente abertas.
+- Anterior/Próxima navegam sem alterar a capa escolhida até clicar em **USAR ESTA PÁGINA**.
+- Motor Gmail, Valor, Washington Post e PDF da v1.1.1 foram preservados.

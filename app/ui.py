@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self.web_resolvers=[]
         self.gmail_queue=[]
         self.gmail_sent_counts={}
+        self.gmail_matter_urls={}
         self.refresh_generation=0
         self.pending_branches=0
         self.active_workers=[]
@@ -88,7 +89,7 @@ class MainWindow(QMainWindow):
         self.paper_status=QLabel(""); self.paper_status.setObjectName("green"); self.paper_status.setWordWrap(True); rl.addWidget(self.paper_status)
         self.preview=QLabel("Aguardando capa"); self.preview.setAlignment(Qt.AlignCenter); self.preview.setMinimumHeight(360); self.preview.setStyleSheet("background:#061321;border:1px solid #29445f;border-radius:10px;color:#8fa9c3"); rl.addWidget(self.preview,1)
         candbox=QGroupBox("Páginas recebidas / candidatas"); cl=QHBoxLayout(candbox); self.prev_btn=QPushButton("◀ Anterior"); self.prev_btn.clicked.connect(lambda:self.move_candidate(-1)); cl.addWidget(self.prev_btn); self.cand_label=QLabel("0 de 0"); self.cand_label.setAlignment(Qt.AlignCenter); cl.addWidget(self.cand_label,1); self.next_btn=QPushButton("Próxima ▶"); self.next_btn.clicked.connect(lambda:self.move_candidate(1)); cl.addWidget(self.next_btn); rl.addWidget(candbox)
-        ba=QHBoxLayout(); review=QPushButton("USAR ESTA PÁGINA"); review.setObjectName("primary"); review.clicked.connect(self.use_current_candidate); ba.addWidget(review); manual=QPushButton("INSERIR CAPA MANUALMENTE"); manual.clicked.connect(self.manual_cover); ba.addWidget(manual); restore=QPushButton("VOLTAR PARA AUTOMÁTICA"); restore.clicked.connect(self.restore_auto); ba.addWidget(restore); rl.addLayout(ba)
+        ba=QHBoxLayout(); self.review_btn=QPushButton("USAR ESTA PÁGINA"); self.review_btn.setObjectName("primary"); self.review_btn.clicked.connect(self.use_current_candidate); ba.addWidget(self.review_btn); manual=QPushButton("INSERIR CAPA MANUALMENTE"); manual.clicked.connect(self.manual_cover); ba.addWidget(manual); restore=QPushButton("VOLTAR PARA AUTOMÁTICA"); restore.clicked.connect(self.restore_auto); ba.addWidget(restore); rl.addLayout(ba)
         content.addWidget(right,62)
         self.statusBar().showMessage("Pronto")
 
@@ -142,10 +143,42 @@ class MainWindow(QMainWindow):
         e=self.current_entry
         if not e:return
         self.paper_title.setText(e.name); self.paper_status.setText(e.status)
-        p=e.current_path
-        if p and p.exists(): self.preview.setPixmap(QPixmap(str(p)).scaled(self.preview.size()-QSize(18,18),Qt.KeepAspectRatio,Qt.SmoothTransformation)); self.preview.setText("")
-        else: self.preview.setPixmap(QPixmap()); self.preview.setText("Aguardando capa")
-        n=len(e.candidates); idx=e.chosen_index if e.chosen_index>=0 else 0; self.cand_label.setText(f"{idx+1 if n else 0} de {n}" + (" • MANUAL" if e.is_manual else "")); self.prev_btn.setEnabled(n>1); self.next_btn.setEnabled(n>1)
+        n=len(e.candidates)
+        if n:
+            if not (0 <= e.review_index < n):
+                e.review_index = e.chosen_index if 0 <= e.chosen_index < n else 0
+            idx=e.review_index
+        else:
+            idx=0
+
+        # A revisão mostra a candidata navegada; o PDF continua usando apenas
+        # chosen_index (ou a capa manual) até o usuário confirmar "USAR ESTA PÁGINA".
+        display_path=None
+        current_candidate=None
+        if e.is_manual:
+            display_path=e.manual_path
+        elif n and 0 <= idx < n:
+            current_candidate=e.candidates[idx]
+            if current_candidate.available and current_candidate.path and current_candidate.path.exists():
+                display_path=current_candidate.path
+
+        if display_path and display_path.exists():
+            self.preview.setPixmap(QPixmap(str(display_path)).scaled(self.preview.size()-QSize(18,18),Qt.KeepAspectRatio,Qt.SmoothTransformation)); self.preview.setText("")
+        else:
+            self.preview.setPixmap(QPixmap())
+            if current_candidate and not current_candidate.available:
+                self.preview.setText(
+                    f"Candidata {current_candidate.page_number} de {n} recebida do Gmail\n\n"
+                    "A imagem original não abriu nesta tentativa.\n"
+                    "A posição foi preservada para a revisão."
+                )
+            else:
+                self.preview.setText("Aguardando capa")
+
+        self.cand_label.setText(f"{idx+1 if n else 0} de {n}" + (" • MANUAL" if e.is_manual else ""))
+        self.prev_btn.setEnabled(n>1); self.next_btn.setEnabled(n>1)
+        if hasattr(self, "review_btn"):
+            self.review_btn.setEnabled(bool(current_candidate and current_candidate.available) and not e.is_manual)
 
     def resizeEvent(self,event):
         super().resizeEvent(event)
@@ -154,12 +187,24 @@ class MainWindow(QMainWindow):
     def move_candidate(self,step):
         e=self.current_entry; n=len(e.candidates) if e else 0
         if n<1:return
-        idx=e.chosen_index if e.chosen_index>=0 else 0; idx=(idx+step)%n; e.choose(idx); e.status=f"Candidata {idx+1}/{n} selecionada • confiança {e.candidates[idx].confidence}%"; self._show_entry(); self._refresh_list()
+        idx=e.review_index if 0<=e.review_index<n else (e.chosen_index if 0<=e.chosen_index<n else 0)
+        idx=(idx+step)%n; e.review_index=idx
+        c=e.candidates[idx]
+        if c.available:
+            e.status=f"Revisando candidata {c.page_number}/{n} • confiança {c.confidence}%"
+        else:
+            e.status=f"Revisando candidata {c.page_number}/{n} • recebida, mas imagem não aberta"
+        self._show_entry(); self._refresh_list()
 
     def use_current_candidate(self):
         e=self.current_entry
         if not e or not e.candidates:return
-        idx=max(0,e.chosen_index); e.choose(idx); e.status=f"Candidata {idx+1}/{len(e.candidates)} escolhida • confiança {e.candidates[idx].confidence}%"; self._show_entry(); self._refresh_list()
+        idx=e.review_index if 0<=e.review_index<len(e.candidates) else 0
+        c=e.candidates[idx]
+        if not c.available or not c.path or not c.path.exists():
+            QMessageBox.warning(self,"Candidata indisponível","Essa página foi recebida pelo Gmail, mas a imagem original não abriu. Escolha outra candidata disponível.")
+            return
+        e.choose(idx); e.status=f"Candidata {c.page_number}/{len(e.candidates)} escolhida • confiança {c.confidence}%"; self._show_entry(); self._refresh_list()
 
     def manual_cover(self):
         e=self.current_entry
@@ -189,6 +234,7 @@ class MainWindow(QMainWindow):
         self.set_status("Atualizando capas…")
         self.gmail_queue = []
         self.gmail_sent_counts = {}
+        self.gmail_matter_urls = {}
         self.web_resolvers = []
         self.gmail_resolver = None
         self.gmail_feed_resolver = None
@@ -201,6 +247,7 @@ class MainWindow(QMainWindow):
             e.chosen_index = -1
             e.automatic_index = -1
             e.automatic_status = ""
+            e.review_index = -1
             e.manual_path = None
         self._refresh_list()
 
@@ -270,6 +317,7 @@ class MainWindow(QMainWindow):
                 continue
             urls = list(matters.get(e.name, []) or [])[:5]
             self.gmail_sent_counts[e.name] = len(urls)
+            self.gmail_matter_urls[e.name] = list(urls)
             if urls:
                 filtered[e.name] = urls
                 e.status = f"Gmail enviou {len(urls)} página(s) • abrindo Ver página…"
@@ -295,27 +343,10 @@ class MainWindow(QMainWindow):
         if generation != self.refresh_generation:
             return
 
-        total = 0
-        for e in self.entries:
-            if e.name not in GMAIL_PAPERS:
-                continue
-            urls = list((covers or {}).get(e.name, []) or [])[:5]
-            total += len(urls)
-            sent = self.gmail_sent_counts.get(e.name, 0)
-            if urls:
-                e.status = f"Gmail {sent} recebida(s) • {len(urls)} Ver página resolvida(s) • analisando…"
-            elif sent > 0:
-                e.status = (
-                    f"Gmail enviou {sent} página(s), mas nenhuma imagem original foi aberta • "
-                    "sem usar internet"
-                )
-        self._refresh_list()
-
-        if total <= 0:
-            self._finish_gmail_branch(generation)
-            return
-
-        pending = {"n": total}
+        # IMPORTANTE v1.1.2: a revisão preserva TODAS as posições recebidas
+        # do Apps Script (até 5), mesmo se uma delas não conseguir abrir o
+        # original_page. O ranking automático só considera as candidatas disponíveis.
+        pending = {"n": 0}
 
         def done_one():
             if generation != self.refresh_generation:
@@ -327,28 +358,79 @@ class MainWindow(QMainWindow):
         for e in self.entries:
             if e.name not in GMAIL_PAPERS:
                 continue
-            urls = list((covers or {}).get(e.name, []) or [])[:5]
-            for page_number, url in enumerate(urls, 1):
+            sent = self.gmail_sent_counts.get(e.name, 0)
+            slots = list((covers or {}).get(e.name, []) or [])[:5]
+            # Garante exatamente 'sent' posições, inclusive as que não resolveram.
+            by_num = {int(x.get("page_number", i+1)): x for i, x in enumerate(slots) if isinstance(x, dict)}
+            e.candidates = []
+            for page_number in range(1, sent + 1):
+                item = by_num.get(page_number, {"page_number": page_number, "url": "", "error": "Ver página não resolvida"})
+                url = str(item.get("url") or "").strip()
+                if not url:
+                    e.candidates.append(CandidatePage(
+                        path=None, score=-9999, confidence=0, recognized_text="",
+                        source_url=(self.gmail_matter_urls.get(e.name, [""]*sent)[page_number-1] if page_number-1 < len(self.gmail_matter_urls.get(e.name, [])) else ""),
+                        page_number=page_number, available=False, error=str(item.get("error") or "Imagem original não aberta")
+                    ))
+                    continue
+
+                # Reserva o slot agora; o worker substitui este placeholder ao concluir.
+                e.candidates.append(CandidatePage(
+                    path=None, score=-9999, confidence=0, recognized_text="", source_url=url,
+                    page_number=page_number, available=False, error="Baixando imagem original…"
+                ))
                 ext = ".webp" if ".webp" in url.lower() else ".jpg"
                 dest = cache_dir() / self.target_date().isoformat() / f"{safe_slug(e.name)}-{page_number}{ext}"
                 w = Worker(self._download_and_score, url, dest, "", e.name, e.mastheads, page_number)
+                pending["n"] += 1
                 w.signals.finished.connect(
                     lambda c, en=e, g=generation, d=done_one: self._gmail_candidate_batch_ready(en, c, g, d)
                 )
                 w.signals.error.connect(
-                    lambda _m, g=generation, d=done_one: d() if g == self.refresh_generation else None
+                    lambda m, en=e, pn=page_number, g=generation, d=done_one: self._gmail_candidate_batch_error(en, pn, m, g, d)
                 )
                 self._start_worker(w)
+
+            if sent:
+                opened=sum(1 for c in e.candidates if c.available)
+                e.status=f"Gmail {sent} recebida(s) • preparando {sent} candidata(s)"
+
+        self._refresh_list()
+        if pending["n"] <= 0:
+            self._finish_gmail_branch(generation)
 
     def _gmail_candidate_batch_ready(self, e, candidate, generation, done_one):
         if generation != self.refresh_generation:
             return
-        e.candidates.append(candidate)
+        # Substitui o slot correspondente, preservando ordem 1..5.
+        idx=max(0, candidate.page_number-1)
+        if idx < len(e.candidates):
+            candidate.available=True
+            candidate.error=""
+            e.candidates[idx]=candidate
+        else:
+            candidate.available=True
+            e.candidates.append(candidate)
         sent = self.gmail_sent_counts.get(e.name, 0)
-        e.status = f"Gmail {sent} recebida(s) • {len(e.candidates)} aberta(s)"
+        opened=sum(1 for c in e.candidates if c.available)
+        e.status = f"Gmail {sent} recebida(s) • {opened}/{sent} imagem(ns) aberta(s) • revisão mostra {sent}/{sent}"
         self._refresh_list()
         if self.current_entry is e:
             self._show_entry()
+        done_one()
+
+    def _gmail_candidate_batch_error(self, e, page_number, msg, generation, done_one):
+        if generation != self.refresh_generation:
+            return
+        idx=max(0,page_number-1)
+        if idx < len(e.candidates):
+            e.candidates[idx].available=False
+            e.candidates[idx].error=str(msg)
+        sent=self.gmail_sent_counts.get(e.name,0)
+        opened=sum(1 for c in e.candidates if c.available)
+        e.status=f"Gmail {sent} recebida(s) • {opened}/{sent} imagem(ns) aberta(s) • revisão mostra {sent}/{sent}"
+        self._refresh_list()
+        if self.current_entry is e:self._show_entry()
         done_one()
 
     def _finish_gmail_branch(self, generation):
@@ -358,17 +440,20 @@ class MainWindow(QMainWindow):
             if e.name not in GMAIL_PAPERS:
                 continue
             sent = self.gmail_sent_counts.get(e.name, 0)
-            if e.candidates:
+            available_indexes=[i for i,c in enumerate(e.candidates) if c.available and c.path and c.path.exists()]
+            if available_indexes:
                 best_index = max(
-                    range(len(e.candidates)),
+                    available_indexes,
                     key=lambda i: (e.candidates[i].score, -e.candidates[i].page_number),
                 )
                 e.chosen_index = best_index
+                e.review_index = best_index
                 e.automatic_index = best_index
                 best = e.candidates[best_index]
+                opened=len(available_indexes)
                 e.automatic_status = (
                     f"Gmail • candidata {best.page_number}/{max(1, sent)} escolhida • "
-                    f"confiança {best.confidence}% • Gmail {sent} recebida(s) / {len(e.candidates)} aberta(s)"
+                    f"confiança {best.confidence}% • revisão {sent}/{sent} recebida(s) • {opened} imagem(ns) aberta(s)"
                 )
                 e.status = e.automatic_status
             elif sent > 0:
@@ -463,6 +548,7 @@ class MainWindow(QMainWindow):
 
         e.candidates = [candidate]
         e.chosen_index = 0
+        e.review_index = 0
         e.automatic_index = 0
         source = "frontpages.com" if "frontpages.com" in candidate.source_url.lower() else "PressReader"
         e.status = f"Capa exibida atualmente no link • fonte {source} • confiança {candidate.confidence}%"

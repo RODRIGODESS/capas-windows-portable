@@ -4,12 +4,14 @@ from typing import List, Optional
 
 @dataclass
 class CandidatePage:
-    path: Path
+    path: Optional[Path]
     score: int = 0
     confidence: int = 0
     recognized_text: str = ""
     source_url: str = ""
     page_number: int = 1
+    available: bool = True
+    error: str = ""
 
 @dataclass
 class CoverEntry:
@@ -23,14 +25,16 @@ class CoverEntry:
     manual_path: Optional[Path] = None
     automatic_index: int = -1
     automatic_status: str = ""
+    review_index: int = -1
 
     @property
     def current_path(self) -> Optional[Path]:
         if self.manual_path and self.manual_path.exists():
             return self.manual_path
         if 0 <= self.chosen_index < len(self.candidates):
-            p = self.candidates[self.chosen_index].path
-            return p if p.exists() else None
+            c = self.candidates[self.chosen_index]
+            p = c.path
+            return p if c.available and p and p.exists() else None
         return None
 
     @property
@@ -38,8 +42,9 @@ class CoverEntry:
         return bool(self.manual_path)
 
     def choose(self, index: int):
-        if 0 <= index < len(self.candidates):
+        if 0 <= index < len(self.candidates) and self.candidates[index].available:
             self.chosen_index = index
+            self.review_index = index
             self.manual_path = None
 
     def set_manual(self, path: Path):
@@ -52,5 +57,6 @@ class CoverEntry:
         self.manual_path = None
         if 0 <= self.automatic_index < len(self.candidates):
             self.chosen_index = self.automatic_index
+            self.review_index = self.automatic_index
         if self.automatic_status:
             self.status = self.automatic_status

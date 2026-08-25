@@ -15,3 +15,7 @@ Base Android: `PrincipaisCapas-Android-v0.7.5.9-SAFE-BOTTOM-NAV-FIX`
 ## Diferença obrigatória de plataforma
 
 O Android usa `HttpURLConnection` e `WebView`. No Windows, a rede do Apps Script é aberta pelo Chromium do Qt para herdar proxy/certificados do Windows; o conteúdo e as regras da resposta permanecem os mesmos. Isso evita o travamento observado em `Localizando páginas no Gmail...` quando `requests` não consegue usar a mesma pilha de rede do navegador.
+
+
+### v1.1.2
+A fila de revisão Windows preserva os 5 slots recebidos do Apps Script. O ranking não remove candidatos da revisão.
