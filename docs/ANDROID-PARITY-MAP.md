@@ -4,7 +4,7 @@ Base Android: `PrincipaisCapas-Android-v0.7.5.9-SAFE-BOTTOM-NAV-FIX`
 
 | Android | Windows v1.1.0 | Regra preservada |
 |---|---|---|
-| `ClippingFeedClient.java` | `AppsScriptFeedResolver` + `network.py` | `/exec`, chave, `action=matters`, data `yyyy-MM-dd`, até 5 links por jornal |
+| `ClippingFeedClient.java` | `AppsScriptFeedResolver` + `network.py` | `/exec`, chave, `action=matters`, data `yyyy-MM-dd`, até 10 links por jornal |
 | `CentralClippingWebResolver.java` | `CentralClippingBatchResolver` | novo Chromium por link, `Leia mais → Ver página → original_page`, máximo 5 |
 | `ClippingImageScanner.java` | `ocr.py` + fluxo da UI | OCR full-page com posições, ranking 0–100, masthead no topo, publicidade, data e NYT Company |
 | `FrontPageBrowserResolver.java` | `FrontPageResolver` | capa atual de Valor/Post, sem filtro de data, rejeição SPORTS, PressReader fallback do Valor |
@@ -26,3 +26,10 @@ A fila de revisão Windows preserva os 5 slots recebidos do Apps Script. O ranki
 - `containsExactEstadaoMasthead` ↔ `contains_exact_estadao_masthead`
 - `isInternalPageHeaderLine` ↔ `is_internal_page_header_line`
 - Bônus de masthead + data e penalização A2/A3/A12/B4 portados com os mesmos valores.
+
+
+### v1.1.4 / Android v0.7.6.2
+- Limite Gmail ampliado de 5 para 10 candidatos.
+- Estadão: referência A2/A3/A12/B4 em chamada de capa não é penalidade.
+- Decisão final continua baseada na imagem `original_page`.
+- Apps Script 0.7.6.2 é compartilhado pelas duas plataformas.

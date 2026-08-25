@@ -313,7 +313,7 @@ class AppsScriptFeedResolver(QObject):
             if not name or not matter_url:
                 continue
             arr = out.setdefault(name, [])
-            if matter_url not in arr and len(arr) < 5:
+            if matter_url not in arr and len(arr) < 10:
                 arr.append(matter_url)
         if not out:
             threads = int(root.get("threads") or 0)
@@ -352,8 +352,8 @@ class CentralClippingBatchResolver(QObject):
     progress = Signal(str)
     completed = Signal(object, object)  # dict[str,list[str]], list[str]
 
-    MAX_MATTERS_PER_PAPER = 5
-    MAX_ORIGINALS_PER_PAPER = 5
+    MAX_MATTERS_PER_PAPER = 10
+    MAX_ORIGINALS_PER_PAPER = 10
     JOB_TIMEOUT_MS = 12000
 
     def __init__(self, parent=None):

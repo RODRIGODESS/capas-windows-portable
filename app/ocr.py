@@ -195,7 +195,7 @@ def _date_matches(text: str, target_date: date | None) -> bool:
 
 
 def score_candidate(path: Path, name: str, mastheads: list[str], target_date: date | None = None) -> tuple[int, int, str]:
-    """Port fiel de ClippingImageScanner.scoreCandidate (Android v0.7.6.1)."""
+    """Port fiel de ClippingImageScanner.scoreCandidate (Android v0.7.6.2)."""
     try:
         with Image.open(path) as orig:
             ow, oh = orig.size
@@ -257,11 +257,10 @@ def score_candidate(path: Path, name: str, mastheads: list[str], target_date: da
     ad = _contains_ad(full)
     if ad: score -= 10 if expected20 else 35
 
-    # v1.1.3 / Android v0.7.6.1 — ESTADÃO:
-    # "FUNDADO EM 1875" também aparece em páginas internas e não pode valer
-    # como masthead por si só. A capa recebe bônus quando o cabeçalho completo
-    # O ESTADO DE S. PAULO aparece no topo e a data selecionada está presente.
-    # Marcadores internos A2/A3/A12/B4... no topo derrubam a candidata.
+    # v1.1.4 / Android v0.7.6.2 — ESTADÃO:
+    # A decisão é feita pela imagem final. Uma chamada de capa pode conter
+    # A2/A3/A12/B4 etc. apenas indicando a página da matéria; não penalizamos
+    # esses marcadores. "FUNDADO EM 1875" sozinho segue insuficiente.
     estadao = "ESTADAO" in normalize(name)
     if estadao:
         exact_estadao_top = contains_exact_estadao_masthead(t35)
@@ -275,9 +274,7 @@ def score_candidate(path: Path, name: str, mastheads: list[str], target_date: da
 
         if founder_only:
             score = min(score, 62)
-        if internal_page_marker_top:
-            score -= 45
-            score = min(score, 55)
+        # Não penalizar A2/A3/A12/B4 no Estadão: pode ser uma chamada da capa.
 
     nyt = "NEW YORK TIMES" in normalize(name)
     nyt_company_only = nyt and "THE NEW YORK TIMES COMPANY" in full and not is_strong_nyt_masthead(t20)

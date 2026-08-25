@@ -68,7 +68,7 @@ def fetch_matters(apps_script_url: str, target_date: date) -> tuple[dict[str, li
         if not name or not matter_url:
             continue
         arr = out.setdefault(name, [])
-        if matter_url not in arr and len(arr) < 5:
+        if matter_url not in arr and len(arr) < 10:
             arr.append(matter_url)
 
     if not out:

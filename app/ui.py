@@ -225,7 +225,7 @@ class MainWindow(QMainWindow):
     def refresh_all(self):
         """Mesmo desenho de execução do Android v0.7.5.9.
 
-        Ramo 1: Gmail/Apps Script -> até 5 Leia mais -> Ver página -> original_page.
+        Ramo 1: Gmail/Apps Script -> até 10 Leia mais -> Ver página -> original_page.
         Ramo 2: Valor/Post em paralelo, sem esperar o Gmail.
         """
         self.refresh_generation += 1
@@ -309,13 +309,13 @@ class MainWindow(QMainWindow):
 
         bridge_version = str((meta or {}).get("version") or "").strip()
         if bridge_version and not (bridge_version.startswith("0.7.5") or bridge_version.startswith("0.7.6")):
-            self.set_status(f"Ponte Gmail v{bridge_version}: recomendado Apps Script 0.7.5.x")
+            self.set_status(f"Ponte Gmail v{bridge_version}: recomendado Apps Script 0.7.6.2")
 
         filtered = {}
         for e in self.entries:
             if e.name not in GMAIL_PAPERS:
                 continue
-            urls = list(matters.get(e.name, []) or [])[:5]
+            urls = list(matters.get(e.name, []) or [])[:10]
             self.gmail_sent_counts[e.name] = len(urls)
             self.gmail_matter_urls[e.name] = list(urls)
             if urls:
@@ -344,7 +344,7 @@ class MainWindow(QMainWindow):
             return
 
         # IMPORTANTE v1.1.2: a revisão preserva TODAS as posições recebidas
-        # do Apps Script (até 5), mesmo se uma delas não conseguir abrir o
+        # do Apps Script (até 10), mesmo se uma delas não conseguir abrir o
         # original_page. O ranking automático só considera as candidatas disponíveis.
         pending = {"n": 0}
 
@@ -359,7 +359,7 @@ class MainWindow(QMainWindow):
             if e.name not in GMAIL_PAPERS:
                 continue
             sent = self.gmail_sent_counts.get(e.name, 0)
-            slots = list((covers or {}).get(e.name, []) or [])[:5]
+            slots = list((covers or {}).get(e.name, []) or [])[:10]
             # Garante exatamente 'sent' posições, inclusive as que não resolveram.
             by_num = {int(x.get("page_number", i+1)): x for i, x in enumerate(slots) if isinstance(x, dict)}
             e.candidates = []
@@ -402,7 +402,7 @@ class MainWindow(QMainWindow):
     def _gmail_candidate_batch_ready(self, e, candidate, generation, done_one):
         if generation != self.refresh_generation:
             return
-        # Substitui o slot correspondente, preservando ordem 1..5.
+        # Substitui o slot correspondente, preservando ordem recebida.
         idx=max(0, candidate.page_number-1)
         if idx < len(e.candidates):
             candidate.available=True
