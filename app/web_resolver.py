@@ -510,8 +510,11 @@ class FrontPageResolver(QObject):
             self._sources = ["https://www.frontpages.com/the-washington-post/"]
             self._slug = "the-washington-post"
         elif name == "VALOR ECONÔMICO":
+            # v1.2.3: para o Valor, usar somente PressReader automaticamente.
+            # O FrontPages pode fornecer uma imagem já recortada na origem e esse
+            # crop nem sempre é detectável apenas por dimensão/proporção. Melhor
+            # deixar o jornal pendente do que aceitar uma capa incompleta.
             self._sources = [
-                "https://www.frontpages.com/valor-economico/",
                 "https://valoreconomico.pressreader.com/valor-economico",
             ]
             self._slug = "valor-economico"
@@ -528,7 +531,7 @@ class FrontPageResolver(QObject):
         return self.resolve(newspaper_name, callback)
 
     def resolve_pressreader_only(self, callback):
-        """Fallback explícito do Valor quando o FrontPages entrega um crop."""
+        """Mantido por compatibilidade; o Valor já usa PressReader por padrão."""
         self.browser.destroy_page()
         self._name = "VALOR ECONÔMICO"
         self._slug = "valor-economico"

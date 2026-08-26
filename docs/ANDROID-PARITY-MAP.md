@@ -47,3 +47,8 @@ Correção sincronizada do novo padrão de assunto do Central Clipping (`CAPA DE
 ## v1.2.2 / Android v0.7.7.2
 - Proteção contra crop do Valor no FrontPages.
 - Fallback automático para PressReader quando a imagem do FrontPages não tem proporção de página completa.
+
+
+## v1.2.3 / Android v0.7.7.3
+- Valor Econômico: PressReader passa a ser a fonte automática exclusiva para impedir regressão de capa cortada do FrontPages.
+- Se a página inteira não puder ser confirmada, o item fica pendente para inserção manual.

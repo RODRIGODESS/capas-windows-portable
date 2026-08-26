@@ -1,3 +1,18 @@
+# Principais Capas Windows Portable v1.2.3 — VALOR PRESSREADER FULL COVER
+
+Base: v1.2.2.
+
+## Correção definitiva do Valor Econômico
+- Remove o FrontPages da busca automática do **Valor Econômico**.
+- O Valor passa a usar **PressReader como fonte automática exclusiva**, evitando aceitar arquivos que já chegam recortados na origem.
+- Se o PressReader não entregar a página inteira, o programa **não aceita uma capa duvidosa** e mantém o Valor pendente para inserção manual.
+- Prévia e PDF continuam preservando a imagem inteira, sem crop e sem deformação.
+- Gmail/Central Clipping, múltiplos e-mails, Washington Post, revisão de candidatas, inserção manual e exportação do PDF foram preservados.
+- Não exige alteração no Apps Script; a implantação v0.7.7.1 continua válida.
+- GitHub Actions continua publicando o ZIP diretamente em Releases.
+
+---
+
 # Principais Capas Windows Portable v1.2.2 — VALOR FULL COVER RESTORE
 
 Base: v1.2.1.
