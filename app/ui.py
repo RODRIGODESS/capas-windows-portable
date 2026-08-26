@@ -309,7 +309,7 @@ class MainWindow(QMainWindow):
 
         bridge_version = str((meta or {}).get("version") or "").strip()
         if bridge_version and not (bridge_version.startswith("0.7.5") or bridge_version.startswith("0.7.6") or bridge_version.startswith("0.7.7")):
-            self.set_status(f"Ponte Gmail v{bridge_version}: recomendado Apps Script 0.7.7.0")
+            self.set_status(f"Ponte Gmail v{bridge_version}: recomendado Apps Script 0.7.7.1")
 
         filtered = {}
         for e in self.entries:

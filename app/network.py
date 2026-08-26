@@ -77,7 +77,7 @@ def fetch_matters(apps_script_url: str, target_date: date) -> tuple[dict[str, li
         raw_links = int(root.get("rawLeiaMaisFound") or 0)
         dated = int(root.get("datedItemsMatched") or 0)
         if threads == 0 or messages == 0:
-            raise RuntimeError("A ponte está ativa, mas não encontrou e-mails de Capa(s) de Jornais para a data selecionada")
+            raise RuntimeError("A ponte está ativa, mas não encontrou e-mails de capas aceitos (ex.: 'Monitoramento: Capa(s) de Jornais' ou 'CAPA DE JORNAIS 1 APP') para a data selecionada")
         if raw_links == 0:
             raise RuntimeError("Os e-mails foram encontrados, mas nenhum link 'Leia mais' foi localizado")
         if dated == 0:

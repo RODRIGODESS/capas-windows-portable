@@ -38,3 +38,7 @@ A fila de revisão Windows preserva os 5 slots recebidos do Apps Script. O ranki
 ## v1.2.0 / Android v0.7.7.0
 - Apps Script consolida múltiplos e-mails de Capa(s) de Jornais do mesmo dia.
 - Android e Windows processam todas as candidatas consolidadas, sem corte de 5/10.
+
+
+## v1.2.1 / Android v0.7.7.1
+Correção sincronizada do novo padrão de assunto do Central Clipping (`CAPA DE JORNAIS N APP`) e alias `O Estado de S. Paulo - Impresso - Flip`.

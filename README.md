@@ -1,4 +1,4 @@
-# Principais Capas Windows Portable v1.2.0 — MULTI EMAIL CONSOLIDATION
+# Principais Capas Windows Portable v1.2.1 — NEW CENTRAL CLIPPING SUBJECT FIX
 
 Base: v1.1.4.
 
@@ -12,8 +12,15 @@ O timeout do Apps Script pelo Chromium foi ampliado para 45 s para acomodar a co
 
 ## Apps Script
 
-Atualize a implantação existente com `GmailCentralClipping-v0.7.7.0-MULTI-EMAIL.gs`. A URL `/exec` não muda.
+Atualize a implantação existente com `GmailCentralClipping-v0.7.7.1-NEW-SUBJECT-FIX.gs`. A URL `/exec` não muda.
 
 ## Preservado
 
 Motor equivalente ao Android, Central Clipping, Valor Econômico, Washington Post, OCR, seleção automática, revisão manual, inserção manual, PDF otimizado, Abrir PDF/Abrir Pasta e publicação direta em GitHub Releases.
+
+
+## v1.2.1
+- Espelha o Android v0.7.7.1.
+- Aceita o novo assunto `CAPA DE JORNAIS 1 APP` e mantém suporte aos assuntos antigos/numerados.
+- Adiciona o alias `O Estado de S. Paulo - Impresso - Flip` ao Estadão no Apps Script.
+- Mantém o mesmo `/exec` oficial e publicação direta em GitHub Releases.

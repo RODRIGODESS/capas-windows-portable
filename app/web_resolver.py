@@ -321,7 +321,7 @@ class AppsScriptFeedResolver(QObject):
             raw_links = int(root.get("rawLeiaMaisFound") or 0)
             dated = int(root.get("datedItemsMatched") or 0)
             if threads == 0 or messages == 0:
-                msg = "A ponte está ativa, mas não encontrou e-mails de Capa(s) de Jornais para a data selecionada"
+                msg = "A ponte está ativa, mas não encontrou e-mails de capas aceitos (ex.: 'Monitoramento: Capa(s) de Jornais' ou 'CAPA DE JORNAIS 1 APP') para a data selecionada"
             elif raw_links == 0:
                 msg = "Os e-mails foram encontrados, mas nenhum link 'Leia mais' foi localizado"
             elif dated == 0:
