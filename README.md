@@ -1,25 +1,19 @@
-# Principais Capas — Windows Portable v1.1.4 — ESTADÃO / ATÉ 10 CANDIDATAS
+# Principais Capas Windows Portable v1.2.0 — MULTI EMAIL CONSOLIDATION
 
-Base: v1.1.3. Esta versão espelha a correção Android v0.7.6.2.
+Base: v1.1.4.
 
-## Correção principal
+## Alteração desta versão
 
-O clipping do Estadão pode identificar a capa com uma chamada curta como `Dark Horse __ A12`. O `A12` indica a página da matéria chamada na capa e não deve fazer o programa rejeitar a imagem.
+A ponte Gmail agora consolida todos os e-mails da data cujo assunto seja `Monitoramento: Capa(s) de Jornais`, aceitando também sufixos numéricos como `1`, `2`, `3` e espaços diferentes ao redor de `:`.
 
-Nesta versão:
+Todos os links `Leia mais` encontrados nos vários e-mails são reunidos por jornal. Só URLs realmente idênticas são deduplicadas. O Windows não corta mais a lista em 10 candidatas: todas as candidatas entregues pelo Apps Script são resolvidas, ranqueadas pela imagem final e ficam disponíveis em revisão.
 
-- Apps Script envia até **10 candidatos para o Estadão** e o Windows suporta até 10; os demais jornais continuam com até 5;
-- todas as posições recebidas ficam disponíveis para revisão;
-- `A2`, `A3`, `A12`, `B4` etc. não derrubam automaticamente uma candidata do Estadão;
-- `FUNDADO EM 1875` sozinho continua insuficiente;
-- a seleção automática usa o OCR da **imagem final**;
-- chamadas curtas com referência de página recebem prioridade apenas para entrar no lote;
-- mantém `ABRIR PDF`, `ABRIR PASTA`, inserção manual, Valor, Washington Post e todo o motor Gmail que já funcionou.
+O timeout do Apps Script pelo Chromium foi ampliado para 45 s para acomodar a consolidação de vários boletins.
 
 ## Apps Script
 
-**Atualize a implantação existente** com `GmailCentralClipping-v0.7.6.2-10-CANDIDATES.gs` usando `Nova versão`. A URL `/exec` permanece a mesma e atende Android e Windows.
+Atualize a implantação existente com `GmailCentralClipping-v0.7.7.0-MULTI-EMAIL.gs`. A URL `/exec` não muda.
 
-## GitHub Releases
+## Preservado
 
-O workflow continua compilando no `windows-latest` e publicando o ZIP portátil diretamente em **GitHub Releases**. A versão é lida de `version.txt` e a tag será `windows-v1.1.4`.
+Motor equivalente ao Android, Central Clipping, Valor Econômico, Washington Post, OCR, seleção automática, revisão manual, inserção manual, PDF otimizado, Abrir PDF/Abrir Pasta e publicação direta em GitHub Releases.

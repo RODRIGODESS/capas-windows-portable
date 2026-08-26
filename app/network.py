@@ -18,7 +18,7 @@ def fetch_matters(apps_script_url: str, target_date: date) -> tuple[dict[str, li
     """Port do ClippingFeedClient.fetchMatterUrls do Android.
 
     Mesmos parâmetros, chave, data yyyy-MM-dd, redirects e limites de timeout.
-    Mantém até cinco matterUrl por nome oficial retornado pelo Apps Script.
+    Mantém todas as matterUrl únicas retornadas pelo Apps Script.
     """
     base = (apps_script_url or "").strip()
     if not base:
@@ -68,7 +68,7 @@ def fetch_matters(apps_script_url: str, target_date: date) -> tuple[dict[str, li
         if not name or not matter_url:
             continue
         arr = out.setdefault(name, [])
-        if matter_url not in arr and len(arr) < 10:
+        if matter_url not in arr:
             arr.append(matter_url)
 
     if not out:
@@ -77,9 +77,9 @@ def fetch_matters(apps_script_url: str, target_date: date) -> tuple[dict[str, li
         raw_links = int(root.get("rawLeiaMaisFound") or 0)
         dated = int(root.get("datedItemsMatched") or 0)
         if threads == 0 or messages == 0:
-            raise RuntimeError("A ponte está ativa, mas não encontrou o e-mail do clipping para a data selecionada")
+            raise RuntimeError("A ponte está ativa, mas não encontrou e-mails de Capa(s) de Jornais para a data selecionada")
         if raw_links == 0:
-            raise RuntimeError("O e-mail foi encontrado, mas nenhum link 'Leia mais' foi localizado")
+            raise RuntimeError("Os e-mails foram encontrados, mas nenhum link 'Leia mais' foi localizado")
         if dated == 0:
             raise RuntimeError("Há links 'Leia mais', mas nenhum corresponde à data selecionada")
         raise RuntimeError("Nenhuma capa compatível foi classificada no Gmail para a data selecionada")

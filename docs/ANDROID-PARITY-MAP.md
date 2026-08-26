@@ -4,7 +4,7 @@ Base Android: `PrincipaisCapas-Android-v0.7.5.9-SAFE-BOTTOM-NAV-FIX`
 
 | Android | Windows v1.1.0 | Regra preservada |
 |---|---|---|
-| `ClippingFeedClient.java` | `AppsScriptFeedResolver` + `network.py` | `/exec`, chave, `action=matters`, data `yyyy-MM-dd`, até 10 links por jornal |
+| `ClippingFeedClient.java` | `AppsScriptFeedResolver` + `network.py` | `/exec`, chave, `action=matters`, data `yyyy-MM-dd`, todos os links únicos consolidados por jornal |
 | `CentralClippingWebResolver.java` | `CentralClippingBatchResolver` | novo Chromium por link, `Leia mais → Ver página → original_page`, máximo 5 |
 | `ClippingImageScanner.java` | `ocr.py` + fluxo da UI | OCR full-page com posições, ranking 0–100, masthead no topo, publicidade, data e NYT Company |
 | `FrontPageBrowserResolver.java` | `FrontPageResolver` | capa atual de Valor/Post, sem filtro de data, rejeição SPORTS, PressReader fallback do Valor |
@@ -33,3 +33,8 @@ A fila de revisão Windows preserva os 5 slots recebidos do Apps Script. O ranki
 - Estadão: referência A2/A3/A12/B4 em chamada de capa não é penalidade.
 - Decisão final continua baseada na imagem `original_page`.
 - Apps Script 0.7.6.2 é compartilhado pelas duas plataformas.
+
+
+## v1.2.0 / Android v0.7.7.0
+- Apps Script consolida múltiplos e-mails de Capa(s) de Jornais do mesmo dia.
+- Android e Windows processam todas as candidatas consolidadas, sem corte de 5/10.

@@ -241,7 +241,7 @@ class AppsScriptFeedResolver(QObject):
     completed = Signal(object, object)  # matters, meta
     failed = Signal(str)
     progress = Signal(str)
-    TIMEOUT_MS = 32000
+    TIMEOUT_MS = 45000
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -313,7 +313,7 @@ class AppsScriptFeedResolver(QObject):
             if not name or not matter_url:
                 continue
             arr = out.setdefault(name, [])
-            if matter_url not in arr and len(arr) < 10:
+            if matter_url not in arr:
                 arr.append(matter_url)
         if not out:
             threads = int(root.get("threads") or 0)
@@ -321,9 +321,9 @@ class AppsScriptFeedResolver(QObject):
             raw_links = int(root.get("rawLeiaMaisFound") or 0)
             dated = int(root.get("datedItemsMatched") or 0)
             if threads == 0 or messages == 0:
-                msg = "A ponte está ativa, mas não encontrou o e-mail do clipping para a data selecionada"
+                msg = "A ponte está ativa, mas não encontrou e-mails de Capa(s) de Jornais para a data selecionada"
             elif raw_links == 0:
-                msg = "O e-mail foi encontrado, mas nenhum link 'Leia mais' foi localizado"
+                msg = "Os e-mails foram encontrados, mas nenhum link 'Leia mais' foi localizado"
             elif dated == 0:
                 msg = "Há links 'Leia mais', mas nenhum corresponde à data selecionada"
             else:
@@ -352,8 +352,6 @@ class CentralClippingBatchResolver(QObject):
     progress = Signal(str)
     completed = Signal(object, object)  # dict[str,list[str]], list[str]
 
-    MAX_MATTERS_PER_PAPER = 10
-    MAX_ORIGINALS_PER_PAPER = 10
     JOB_TIMEOUT_MS = 12000
 
     def __init__(self, parent=None):
@@ -383,8 +381,6 @@ class CentralClippingBatchResolver(QObject):
                     continue
                 n += 1
                 self.jobs.append((name, u, n))
-                if n >= self.MAX_MATTERS_PER_PAPER:
-                    break
         self._start_next_job()
 
     def _start_next_job(self):
@@ -394,7 +390,7 @@ class CentralClippingBatchResolver(QObject):
             self.job_index += 1
             name, url, page_number = job
             # Mantemos um slot por item recebido do Apps Script. Não deduplicamos
-            # páginas aqui: se o Gmail enviou 5 matérias, a revisão terá 5 posições.
+            # páginas aqui: se o Gmail enviou N matérias, a revisão terá N posições.
             self.current_job = job
             self.probe_count = 0
             self.generation += 1
@@ -468,8 +464,8 @@ class CentralClippingBatchResolver(QObject):
         _name, _matter_url, page_number = self.current_job
         msg = f"{name}: candidata {page_number}: Ver página não localizado no link exato"
         self.errors.append(msg)
-        # Preserva também a posição que não abriu. Assim 5 recebidas continuam
-        # aparecendo como 5 na revisão, com diagnóstico no slot correspondente.
+        # Preserva também a posição que não abriu. Assim N recebidas continuam
+        # aparecendo como N na revisão, com diagnóstico no slot correspondente.
         self.resolved.setdefault(name, []).append({
             "page_number": page_number, "url": "", "error": msg
         })
@@ -484,7 +480,7 @@ class CentralClippingBatchResolver(QObject):
         self.browser.destroy_page()
         ordered = {}
         for name, items in self.resolved.items():
-            ordered[name] = sorted(items, key=lambda x: int(x.get("page_number", 999)))[:self.MAX_ORIGINALS_PER_PAPER]
+            ordered[name] = sorted(items, key=lambda x: int(x.get("page_number", 999)))
         self.completed.emit(ordered, list(self.errors))
 
 
