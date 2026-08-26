@@ -528,7 +528,7 @@ class MainWindow(QMainWindow):
             lambda c, en=e, g=generation: self._web_candidate_ready(en, c, g, one_done)
         )
         w.signals.error.connect(
-            lambda m, en=e, g=generation: self._web_candidate_error(en, m, g, one_done)
+            lambda m, en=e, r=resolver, g=generation: self._web_candidate_error(en, r, m, g, one_done)
         )
         self._start_worker(w)
 
@@ -558,8 +558,21 @@ class MainWindow(QMainWindow):
             self._show_entry()
         one_done()
 
-    def _web_candidate_error(self, e, msg, generation, one_done):
+    def _web_candidate_error(self, e, resolver, msg, generation, one_done):
         if generation != self.refresh_generation:
+            return
+        # v1.2.2: se o FrontPages do Valor entregou a miniatura/crop, não
+        # concluímos com erro nem aceitamos a imagem incompleta. Tentamos o
+        # PressReader automaticamente, como fallback da versão Android.
+        if (e.name == "VALOR ECONÔMICO"
+                and "frontpages.com" in (resolver.last_referer or "").lower()
+                and "recortada" in (msg or "").lower()):
+            e.status = "FrontPages retornou capa recortada • tentando PressReader…"
+            self._refresh_list()
+            resolver.resolve_pressreader_only(
+                lambda url, err, en=e, r=resolver, g=generation:
+                    self._web_resolved(en, r, url, err, g, one_done)
+            )
             return
         e.status = f"Falha ao baixar capa: {msg}"
         self._refresh_list()
@@ -567,6 +580,18 @@ class MainWindow(QMainWindow):
 
     def _download_and_score(self, url, dest, referer, name, mastheads, page_number=1, cookie_header="", user_agent=""):
         download_image(url, dest, referer, cookie_header=cookie_header, user_agent=user_agent or None)
+        if name == "VALOR ECONÔMICO" and "frontpages.com" in (url or "").lower():
+            with Image.open(dest) as im:
+                iw, ih = im.size
+            ratio = ih / max(1, iw)
+            if iw < 700 or ih < 950 or ratio < 1.34:
+                try:
+                    dest.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"FrontPages retornou capa recortada do Valor ({iw}x{ih}, proporção {ratio:.2f})"
+                )
         score, conf, text = score_candidate(dest, name, mastheads, self.target_date())
         return CandidatePage(dest, score, conf, text, url, page_number)
 

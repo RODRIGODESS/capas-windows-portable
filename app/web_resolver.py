@@ -527,6 +527,16 @@ class FrontPageResolver(QObject):
     def resolve_frontpages(self, newspaper_name: str, callback):
         return self.resolve(newspaper_name, callback)
 
+    def resolve_pressreader_only(self, callback):
+        """Fallback explícito do Valor quando o FrontPages entrega um crop."""
+        self.browser.destroy_page()
+        self._name = "VALOR ECONÔMICO"
+        self._slug = "valor-economico"
+        self._sources = ["https://valoreconomico.pressreader.com/valor-economico"]
+        self.done_cb = callback
+        self._source_index = -1
+        self._start_next_source()
+
     def _start_next_source(self):
         self.browser.destroy_page()
         self._source_index += 1

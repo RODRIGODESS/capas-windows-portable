@@ -1,3 +1,16 @@
+# Principais Capas Windows Portable v1.2.2 — VALOR FULL COVER RESTORE
+
+Base: v1.2.1.
+
+## Correção
+- Corrige regressão em que o Valor Econômico podia ser aceito a partir de uma imagem recortada do FrontPages.
+- O FrontPages continua sendo a primeira tentativa.
+- Se a imagem baixada tiver proporção típica de crop/miniatura, ela é descartada e o app tenta automaticamente o PressReader.
+- A prévia usa KeepAspectRatio e o PDF mantém a imagem inteira, sem crop nem deformação.
+- Gmail/Central Clipping, múltiplos e-mails, Washington Post, revisão de candidatas, inserção manual e PDF não foram alterados.
+- Não exige alteração no Apps Script; a implantação v0.7.7.1 continua válida.
+- GitHub Actions continua publicando o ZIP diretamente em Releases.
+
 # Principais Capas Windows Portable v1.2.1 — NEW CENTRAL CLIPPING SUBJECT FIX
 
 Base: v1.1.4.

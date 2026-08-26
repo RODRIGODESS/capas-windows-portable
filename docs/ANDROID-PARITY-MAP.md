@@ -42,3 +42,8 @@ A fila de revisão Windows preserva os 5 slots recebidos do Apps Script. O ranki
 
 ## v1.2.1 / Android v0.7.7.1
 Correção sincronizada do novo padrão de assunto do Central Clipping (`CAPA DE JORNAIS N APP`) e alias `O Estado de S. Paulo - Impresso - Flip`.
+
+
+## v1.2.2 / Android v0.7.7.2
+- Proteção contra crop do Valor no FrontPages.
+- Fallback automático para PressReader quando a imagem do FrontPages não tem proporção de página completa.
