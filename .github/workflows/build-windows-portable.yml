@@ -26,21 +26,25 @@ jobs:
         shell: pwsh
         run: python scripts/apply_windows_parity_v1_2_5.py
 
+      - name: Aplicar conectividade Windows v1.2.6
+        shell: pwsh
+        run: python scripts/apply_windows_connectivity_v1_2_6.py
+
       - name: Validar fontes Python
         shell: pwsh
         run: python -m compileall -q app main.py
 
-      - name: Registrar paridade Windows
+      - name: Registrar fontes Windows
         shell: pwsh
         run: |
           if (git status --porcelain) {
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add app/models.py app/ocr.py app/ui.py app/web_resolver.py app/valor_email_pdf.py requirements.txt version.txt README.md
-            git commit -m "feat(windows): paridade Android 0.7.7.7 v1.2.5 [skip ci]"
+            git add app/models.py app/ocr.py app/ui.py app/web_resolver.py app/network.py app/valor_email_pdf.py requirements.txt version.txt README.md
+            git commit -m "fix(windows): conectividade Gmail e Valor v1.2.6 [skip ci]"
             git push origin HEAD:main
           } else {
-            Write-Host "Paridade Windows já aplicada."
+            Write-Host "Fontes Windows já estão atualizadas."
           }
 
       - name: Python 3.11
