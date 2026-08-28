@@ -22,6 +22,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Aplicar paridade Android 0.7.7.7
+        shell: pwsh
+        run: python scripts/apply_windows_parity_v1_2_5.py
+
+      - name: Validar fontes Python
+        shell: pwsh
+        run: python -m compileall -q app main.py
+
+      - name: Registrar paridade Windows
+        shell: pwsh
+        run: |
+          if (git status --porcelain) {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add app/models.py app/ocr.py app/ui.py app/web_resolver.py app/valor_email_pdf.py requirements.txt version.txt README.md
+            git commit -m "feat(windows): paridade Android 0.7.7.7 v1.2.5 [skip ci]"
+            git push origin HEAD:main
+          } else {
+            Write-Host "Paridade Windows já aplicada."
+          }
+
       - name: Python 3.11
         uses: actions/setup-python@v5
         with:
