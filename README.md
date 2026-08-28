@@ -1,3 +1,16 @@
+# Principais Capas Windows Portable v1.2.5 — PARIDADE ANDROID 0.7.7.7
+
+Base funcional: Windows v1.2.2, preservando interface e PDF.
+
+- Valor Econômico prioriza `valor_manifest`/`valor_pdf` do Gmail.
+- Páginas 1, 2 e 3 ficam no aplicativo e em `Downloads/Principais Capas/Valor Economico`; Página 1 é a capa automática.
+- Se Página 1 falhar, fallback v1.2.2: FrontPages → validação de capa completa (razão >= 1,34) → PressReader.
+- Perfis de capa por jornal reduzem falsos positivos sem eliminar candidatas.
+- Até 4 jornais do Gmail são resolvidos em paralelo; todas as candidatas e sua ordem são preservadas.
+- Revisão manual, inserção manual, PDF, Abrir PDF/Abrir Pasta e Releases permanecem.
+
+---
+
 # Principais Capas Windows Portable v1.2.3 — VALOR PRESSREADER FULL COVER
 
 Base: v1.2.2.

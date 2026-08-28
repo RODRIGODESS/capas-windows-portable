@@ -149,6 +149,16 @@ def matches_expected(text: str, name: str) -> bool:
     return bool(expected and expected in t)
 
 
+def matches_cover_profile_top(top20: str, top35: str, name: str) -> bool:
+    t20 = normalize(top20); t35 = normalize(top35); n = normalize(name)
+    if n == "O GLOBO": return "O GLOBO" in t20 or ("GLOBO" in t20 and "IRINEU MARINHO" in t35)
+    if "FOLHA" in n: return "FOLHA DE S PAULO" in t20 or "FOLHA DE SAO PAULO" in t20 or ("FOLHA" in t20 and "PAULO" in t20)
+    if "ESTADAO" in n: return contains_exact_estadao_masthead(t35)
+    if "CORREIO BRAZILIENSE" in n: return "CORREIO BRAZILIENSE" in t20 or ("CORREIO" in t20 and "BRAZILIENSE" in t20)
+    if "ESTADO DE MINAS" in n: return "ESTADO DE MINAS" in t20 or ("ESTADO" in t20 and "MINAS" in t20)
+    if "NEW YORK TIMES" in n: return is_strong_nyt_masthead(t20)
+    return matches_expected(t20, name)
+
 def contains_exact_estadao_masthead(text: str) -> bool:
     t = normalize(text)
     return (
@@ -257,6 +267,19 @@ def score_candidate(path: Path, name: str, mastheads: list[str], target_date: da
     ad = _contains_ad(full)
     if ad: score -= 10 if expected20 else 35
 
+    # v1.2.5 / Android v0.7.7.6 — perfil de capa; nunca elimina candidata.
+    profile_date = _date_matches(full, target_date)
+    profile_exact_top = matches_cover_profile_top(t20, t35, name)
+    profile_strong_top = masthead_strength >= 3 or (profile_exact_top and masthead_strength >= 2)
+    profile_medium_top = masthead_strength >= 2 or expected20 or profile_exact_top
+    profile_estadao = "ESTADAO" in normalize(name)
+    if profile_exact_top: score += 10
+    if profile_strong_top: score += 8
+    if profile_strong_top and profile_date: score += 12
+    if internal_page_marker_top and not profile_estadao and not profile_strong_top:
+        score -= 28; score = min(score, 48)
+    if not profile_medium_top and expected_full: score = min(score, 62)
+
     # v1.1.4 / Android v0.7.6.2 — ESTADÃO:
     # A decisão é feita pela imagem final. Uma chamada de capa pode conter
     # A2/A3/A12/B4 etc. apenas indicando a página da matéria; não penalizamos
@@ -281,6 +304,11 @@ def score_candidate(path: Path, name: str, mastheads: list[str], target_date: da
     if nyt_company_only:
         score -= 45
         score = min(score, 35)
+
+    if profile_exact_top and profile_strong_top and profile_date and not other and not ad and line_count >= 8:
+        score = max(score, 92)
+    elif profile_exact_top and profile_strong_top and not other and not ad:
+        score = max(score, 84)
 
     if not expected_full: score = min(score, 55)
     if other: score = min(score, 20)

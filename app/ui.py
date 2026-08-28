@@ -17,7 +17,8 @@ from .newspapers import load_entries
 from .ocr import score_candidate, normalize
 from .pdf_export import export_pdf, build_filename
 from .workers import Worker
-from .web_resolver import Resolver, CentralClippingBatchResolver, AppsScriptFeedResolver, ANDROID_FRONT_UA
+from .web_resolver import Resolver, CentralClippingBatchResolver, ParallelCentralClippingResolver, AppsScriptFeedResolver, ANDROID_FRONT_UA
+from .valor_email_pdf import load_valor_candidates
 
 STYLE = """
 QMainWindow,QWidget{background:#071625;color:#eaf3ff;font-family:'Segoe UI';font-size:13px}
@@ -332,7 +333,7 @@ class MainWindow(QMainWindow):
         # v1.0.2: porta o CentralClippingWebResolver do Android como um lote único.
         # Cada link usa uma QWebEngineView NOVA, realmente anexada à janela (fora da tela),
         # reproduzindo o detalhe que faltava na v1.0.1.
-        self.gmail_batch_resolver = CentralClippingBatchResolver(self)
+        self.gmail_batch_resolver = ParallelCentralClippingResolver(self)
         self.gmail_batch_resolver.progress.connect(self.set_status)
         self.gmail_batch_resolver.completed.connect(
             lambda covers, errors, g=generation: self._gmail_originals_ready(covers, errors, g)
@@ -467,44 +468,55 @@ class MainWindow(QMainWindow):
 
     # ---------------- Valor / Washington Post ----------------
     def _start_web_branch(self, generation):
-        if generation != self.refresh_generation:
-            return
-        web_entries = []
+        if generation != self.refresh_generation: return
+        web_entries=[]
         for e in self.entries:
             if e.name == "VALOR ECONÔMICO":
-                if self.target_date().weekday() >= 5:
-                    e.status = "Sem edição regular no fim de semana"
-                else:
-                    e.status = "Buscando a capa exibida atualmente no link…"
-                    web_entries.append(e)
+                if self.target_date().weekday() >= 5: e.status="Sem edição regular no fim de semana"
+                else: e.status="Valor: procurando 3 PDFs no Gmail…"; web_entries.append(e)
             elif e.name == "THE WASHINGTON POST":
-                e.status = "Buscando a capa exibida atualmente no link…"
-                web_entries.append(e)
+                e.status="Buscando a capa exibida atualmente no link…"; web_entries.append(e)
         self._refresh_list()
-
-        if not web_entries:
-            self._branch_done(generation)
-            return
-
-        pending = {"n": len(web_entries)}
-
+        if not web_entries: self._branch_done(generation); return
+        pending={"n":len(web_entries)}
         def one_done():
-            if generation != self.refresh_generation:
-                return
-            pending["n"] -= 1
-            if pending["n"] <= 0:
-                self._branch_done(generation)
-
+            if generation != self.refresh_generation: return
+            pending["n"]-=1
+            if pending["n"] <= 0: self._branch_done(generation)
         for e in web_entries:
-            # Resolver separado por jornal -> Post e Valor realmente paralelos.
-            resolver = Resolver(self)
-            resolver.progress.connect(self.set_status)
-            self.web_resolvers.append(resolver)
-            resolver.resolve_frontpages(
-                e.name,
-                lambda url, err, en=e, r=resolver, g=generation:
-                    self._web_resolved(en, r, url, err, g, one_done)
-            )
+            if e.name == "VALOR ECONÔMICO":
+                w=Worker(load_valor_candidates,self.settings.get("apps_script_url",""),self.target_date())
+                w.signals.finished.connect(lambda cand,en=e,g=generation,d=one_done:self._valor_email_ready(en,cand,g,d))
+                w.signals.error.connect(lambda msg,en=e,g=generation,d=one_done:self._valor_email_error(en,msg,g,d))
+                self._start_worker(w)
+            else: self._start_single_web_resolver(e,generation,one_done)
+
+    def _valor_email_ready(self,e,candidates,generation,one_done):
+        if generation != self.refresh_generation: return
+        candidates=list(candidates or [])
+        indexes=[i for i,c in enumerate(candidates) if c.page_number==1 and c.available and c.path and c.path.exists()]
+        if indexes:
+            e.candidates=candidates; idx=indexes[0]
+            e.chosen_index=idx; e.review_index=idx; e.automatic_index=idx
+            available=sum(1 for c in candidates if c.available and c.path and c.path.exists()); total=len(candidates)
+            e.automatic_status=(f"Gmail • {available}/{total} PDF(s) do Valor no aplicativo • {total} página(s) em REVISAR CAPA • "
+                                "Página 1 selecionada • cópia em Downloads/Principais Capas/Valor Economico")
+            e.status=e.automatic_status; self._refresh_list()
+            if self.current_entry is e: self._show_entry()
+            one_done(); return
+        e.status="Valor: Página 1 não veio do Gmail • usando fallback web v1.2.2…"; self._refresh_list()
+        self._start_single_web_resolver(e,generation,one_done)
+
+    def _valor_email_error(self,e,msg,generation,one_done):
+        if generation != self.refresh_generation: return
+        e.status=f"Valor: Gmail indisponível ({msg}) • usando fallback web v1.2.2…"; self._refresh_list()
+        self._start_single_web_resolver(e,generation,one_done)
+
+    def _start_single_web_resolver(self,e,generation,one_done,pressreader_only=False):
+        resolver=Resolver(self); resolver.progress.connect(self.set_status); self.web_resolvers.append(resolver)
+        cb=lambda url,err,en=e,r=resolver,g=generation:self._web_resolved(en,r,url,err,g,one_done)
+        if pressreader_only: resolver.resolve_pressreader_only(cb)
+        else: resolver.resolve_frontpages(e.name,cb)
 
     def _web_resolved(self, e, resolver, url, err, generation, one_done):
         if generation != self.refresh_generation:
@@ -525,16 +537,28 @@ class MainWindow(QMainWindow):
         cookie_header = getattr(resolver, "last_cookie_header", "") or ""
         w = Worker(self._download_and_score, url, dest, referer, e.name, e.mastheads, 1, cookie_header, ANDROID_FRONT_UA)
         w.signals.finished.connect(
-            lambda c, en=e, g=generation: self._web_candidate_ready(en, c, g, one_done)
+            lambda c, en=e, r=resolver, g=generation: self._web_candidate_ready(en, r, c, g, one_done)
         )
         w.signals.error.connect(
             lambda m, en=e, r=resolver, g=generation: self._web_candidate_error(en, r, m, g, one_done)
         )
         self._start_worker(w)
 
-    def _web_candidate_ready(self, e, candidate, generation, one_done):
+    def _web_candidate_ready(self, e, resolver, candidate, generation, one_done):
         if generation != self.refresh_generation:
             return
+        # v1.2.5: validação exclusiva do Valor/FrontPages da base v1.2.2.
+        if e.name == "VALOR ECONÔMICO" and "frontpages.com" in candidate.source_url.lower():
+            try:
+                with Image.open(candidate.path) as im: w,h=im.size
+                complete=w>=700 and h>=950 and h/max(1,w)>=1.34
+            except Exception: complete=False
+            if not complete:
+                try: candidate.path.unlink(missing_ok=True)
+                except Exception: pass
+                e.status="Valor: FrontPages retornou capa recortada • tentando PressReader…"; self._refresh_list()
+                self._start_single_web_resolver(e,generation,one_done,pressreader_only=True); return
+
         # Segurança extra igual ao Android: nunca aceitar Washington Post SPORTS.
         if e.name == "THE WASHINGTON POST" and "WASHINGTON POST SPORTS" in normalize(candidate.recognized_text):
             try:
@@ -561,9 +585,11 @@ class MainWindow(QMainWindow):
     def _web_candidate_error(self, e, resolver, msg, generation, one_done):
         if generation != self.refresh_generation:
             return
+        if e.name == "VALOR ECONÔMICO" and "frontpages.com" in (resolver.last_referer or "").lower():
+            e.status=f"Valor: FrontPages falhou ({msg}) • tentando PressReader…"; self._refresh_list()
+            self._start_single_web_resolver(e,generation,one_done,pressreader_only=True); return
         e.status = f"Falha ao baixar capa: {msg}"
-        self._refresh_list()
-        one_done()
+        self._refresh_list(); one_done()
 
     def _download_and_score(self, url, dest, referer, name, mastheads, page_number=1, cookie_header="", user_agent=""):
         download_image(url, dest, referer, cookie_header=cookie_header, user_agent=user_agent or None)

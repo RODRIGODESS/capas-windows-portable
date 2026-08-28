@@ -12,6 +12,8 @@ class CandidatePage:
     page_number: int = 1
     available: bool = True
     error: str = ""
+    pdf_path: Optional[Path] = None
+    source_filename: str = ""
 
 @dataclass
 class CoverEntry:

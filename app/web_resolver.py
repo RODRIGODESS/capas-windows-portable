@@ -484,6 +484,48 @@ class CentralClippingBatchResolver(QObject):
         self.completed.emit(ordered, list(self.errors))
 
 
+class ParallelCentralClippingResolver(QObject):
+    """Android v0.7.7.7: até 4 jornais em paralelo, sem cortar candidatas."""
+    progress = Signal(str)
+    completed = Signal(object, object)
+    MAX_CONCURRENT_NEWSPAPERS = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pending=[]; self._active_resolvers=[]; self._resolved=OrderedDict(); self._errors=[]; self._generation=0
+
+    def resolve(self, matter_urls):
+        self._generation += 1; g=self._generation
+        self._pending=[]; self._active_resolvers=[]; self._resolved=OrderedDict(); self._errors=[]
+        for name, urls in (matter_urls or {}).items():
+            if name in ("VALOR ECONÔMICO", "THE WASHINGTON POST"): continue
+            clean=[(u or "").strip() for u in (urls or []) if (u or "").strip()]
+            if clean:
+                self._pending.append((name,clean)); self._resolved.setdefault(name,[])
+        self._pump(g)
+
+    def _pump(self, g):
+        if g != self._generation: return
+        while self._pending and len(self._active_resolvers) < self.MAX_CONCURRENT_NEWSPAPERS:
+            name, urls = self._pending.pop(0)
+            r = CentralClippingBatchResolver(self); self._active_resolvers.append(r)
+            r.progress.connect(self.progress.emit)
+            r.completed.connect(lambda covers, errors, rr=r, n=name, gen=g: self._one_done(rr,n,covers,errors,gen))
+            r.resolve({name: urls})
+        if not self._pending and not self._active_resolvers:
+            out=OrderedDict()
+            for name,items in self._resolved.items(): out[name]=sorted(items,key=lambda x:int(x.get("page_number",999)))
+            self.completed.emit(dict(out), list(self._errors))
+
+    def _one_done(self, resolver, name, covers, errors, g):
+        if g != self._generation: return
+        try: self._active_resolvers.remove(resolver)
+        except ValueError: pass
+        self._resolved[name]=list((covers or {}).get(name,[]) or [])
+        self._errors.extend(list(errors or [])); resolver.deleteLater()
+        QTimer.singleShot(0, lambda gen=g: self._pump(gen))
+
+
 class FrontPageResolver(QObject):
     """Port do FrontPageBrowserResolver.java do Android v0.7.5.9."""
 
@@ -510,11 +552,9 @@ class FrontPageResolver(QObject):
             self._sources = ["https://www.frontpages.com/the-washington-post/"]
             self._slug = "the-washington-post"
         elif name == "VALOR ECONÔMICO":
-            # v1.2.3: para o Valor, usar somente PressReader automaticamente.
-            # O FrontPages pode fornecer uma imagem já recortada na origem e esse
-            # crop nem sempre é detectável apenas por dimensão/proporção. Melhor
-            # deixar o jornal pendente do que aceitar uma capa incompleta.
+            # v1.2.5: fallback web aprovado da v1.2.2.
             self._sources = [
+                "https://www.frontpages.com/valor-economico/",
                 "https://valoreconomico.pressreader.com/valor-economico",
             ]
             self._slug = "valor-economico"
