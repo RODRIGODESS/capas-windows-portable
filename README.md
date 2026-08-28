@@ -1,3 +1,15 @@
+# Principais Capas Windows Portable v1.2.6 — CONECTIVIDADE WINDOWS ROBUSTA
+
+Base: v1.2.5, preservando integralmente Valor com 3 PDFs, perfis de capa e processamento paralelo seguro.
+
+- Apps Script: tenta primeiro rede nativa do Windows (PowerShell/.NET), depois requests com proxy/sistema e conexão direta.
+- Jornais do Gmail: se a rota direta falhar, o aplicativo cai automaticamente para o Chromium interno.
+- Valor Econômico: usa a mesma pilha robusta para `valor_manifest` e `valor_pdf`, com timeouts menores e sem ficar 120 s por chamada.
+- Certificados: `truststore` integra o Python ao armazenamento de certificados do Windows.
+- Nenhuma candidata é cortada; todos os perfis e a lógica v1.2.5 permanecem.
+
+---
+
 # Principais Capas Windows Portable v1.2.5 — PARIDADE ANDROID 0.7.7.7
 
 Base funcional: Windows v1.2.2, preservando interface e PDF.

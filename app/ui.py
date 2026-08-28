@@ -281,16 +281,34 @@ class MainWindow(QMainWindow):
                 e.status = "Localizando páginas no Gmail…"
         self._refresh_list()
 
-        # v1.1.0: o Apps Script é aberto pelo Chromium do próprio aplicativo.
-        # Isso herda proxy/certificados do Windows e elimina a diferença que
-        # fazia o requests ficar preso em "Localizando páginas no Gmail...".
+        # v1.2.6: primeiro usa a pilha de rede Windows nativa/requests robusta.
+        # Se ainda assim falhar, cai automaticamente para o Chromium interno.
+        w = Worker(fetch_matters, url, self.target_date())
+        w.signals.finished.connect(lambda result, g=generation: self._feed_ready(result, g))
+        w.signals.error.connect(lambda msg, u=url, g=generation: self._feed_direct_error(msg, u, g))
+        self._start_worker(w)
+
+    def _feed_direct_error(self, msg, url, generation):
+        if generation != self.refresh_generation:
+            return
+        for e in self.entries:
+            if e.name in GMAIL_PAPERS:
+                e.status = "Conexão direta falhou • tentando navegador do Windows…"
+        self._refresh_list()
+        self.set_status("Gmail: tentando navegador interno após falha da conexão direta")
         self.gmail_feed_resolver = AppsScriptFeedResolver(self)
         self.gmail_feed_resolver.progress.connect(self.set_status)
         self.gmail_feed_resolver.completed.connect(
             lambda matters, meta, g=generation: self._feed_ready((matters, meta), g)
         )
-        self.gmail_feed_resolver.failed.connect(lambda msg, g=generation: self._feed_error(msg, g))
-        self.gmail_feed_resolver.fetch(url, self.settings.get("access_key", "PC26-8F2D4A7B-31C9E6F0-5A1D"), self.target_date())
+        self.gmail_feed_resolver.failed.connect(
+            lambda browser_msg, direct_msg=str(msg), g=generation: self._feed_error(
+                f"direto: {direct_msg} | navegador: {browser_msg}", g
+            )
+        )
+        self.gmail_feed_resolver.fetch(
+            url, self.settings.get("access_key", "PC26-8F2D4A7B-31C9E6F0-5A1D"), self.target_date()
+        )
 
     def _feed_error(self, msg, generation):
         if generation != self.refresh_generation:

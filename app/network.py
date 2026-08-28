@@ -1,5 +1,14 @@
 import re
+import json
+import os
+import subprocess
 import requests
+
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlencode
@@ -12,6 +21,72 @@ IMAGE_UA = "Mozilla/5.0 (Android) PrincipaisCapas/0.7.5.0"
 def _valid_webapp_url(url: str) -> bool:
     u = (url or "").strip().lower()
     return u.startswith("https://script.google.com/macros/s/") and "/exec" in u
+
+
+def _powershell_get_text(url: str, headers: dict | None = None, timeout_sec: int = 22) -> str:
+    """Fallback Windows nativo: usa WinHTTP/.NET, certificado e proxy do Windows."""
+    if os.name != "nt":
+        raise RuntimeError("PowerShell disponível apenas no Windows")
+    env = os.environ.copy()
+    env["PC_HTTP_URL"] = url
+    env["PC_HTTP_UA"] = str((headers or {}).get("User-Agent") or ANDROID_FEED_UA)
+    script = (
+        "$ProgressPreference='SilentlyContinue';"
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
+        "$h=@{'User-Agent'=$env:PC_HTTP_UA;'Accept'='application/json,text/plain,*/*'};"
+        f"$r=Invoke-WebRequest -UseBasicParsing -Uri $env:PC_HTTP_URL -TimeoutSec {int(timeout_sec)} -Headers $h;"
+        "[Console]::Out.Write($r.Content)"
+    )
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    cp = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=timeout_sec + 8,
+        creationflags=flags,
+    )
+    if cp.returncode != 0:
+        err = (cp.stderr or cp.stdout or "falha no PowerShell").strip().replace("\r", " ").replace("\n", " ")
+        raise RuntimeError(err[:280])
+    body = (cp.stdout or "").strip()
+    if not body:
+        raise RuntimeError("PowerShell retornou resposta vazia")
+    return body
+
+
+def get_text_windows(url: str, headers: dict | None = None, connect_timeout: int = 5, read_timeout: int = 18) -> str:
+    """Rede robusta para o Portable.
+
+    1) PowerShell/Windows nativo (certificados e proxy do Windows);
+    2) requests usando proxy/ambiente;
+    3) requests sem proxy do ambiente.
+    """
+    errors = []
+    if os.name == "nt":
+        try:
+            return _powershell_get_text(url, headers=headers, timeout_sec=max(12, read_timeout))
+        except Exception as exc:
+            errors.append("Windows: " + str(exc))
+
+    for trust_env, label in ((True, "proxy/sistema"), (False, "direto")):
+        try:
+            with requests.Session() as session:
+                session.trust_env = trust_env
+                r = session.get(
+                    url,
+                    timeout=(connect_timeout, read_timeout),
+                    headers=headers or {},
+                    allow_redirects=True,
+                )
+                if r.status_code < 200 or r.status_code >= 300:
+                    raise RuntimeError(f"HTTP {r.status_code}")
+                return (r.text or "").strip()
+        except Exception as exc:
+            errors.append(label + ": " + str(exc))
+    raise RuntimeError(" | ".join(errors[-3:]))
 
 
 def fetch_matters(apps_script_url: str, target_date: date) -> tuple[dict[str, list[str]], dict]:
@@ -29,33 +104,22 @@ def fetch_matters(apps_script_url: str, target_date: date) -> tuple[dict[str, li
     params = {"key": ACCESS_KEY, "action": "matters", "date": target_date.isoformat()}
     url = base + ("&" if "?" in base else "?") + urlencode(params)
 
-    session = requests.Session()
-    # requests já usa proxy do ambiente. No Windows, urllib também pode ler a
-    # configuração de proxy do sistema; trust_env precisa permanecer ativado.
-    session.trust_env = True
     try:
-        r = session.get(
+        body = get_text_windows(
             url,
-            timeout=(7, 25),
-            headers={"User-Agent": ANDROID_FEED_UA},
-            allow_redirects=True,
+            headers={"User-Agent": ANDROID_FEED_UA, "Accept": "application/json,text/plain,*/*"},
+            connect_timeout=5,
+            read_timeout=18,
         )
-    except requests.Timeout as exc:
-        raise RuntimeError("Ponte Gmail excedeu o tempo de resposta") from exc
-    except requests.RequestException as exc:
+    except Exception as exc:
         raise RuntimeError(f"Ponte Gmail: {exc}") from exc
-
-    if r.status_code < 200 or r.status_code >= 300:
-        raise RuntimeError(f"Ponte Gmail HTTP {r.status_code}")
-
-    body = (r.text or "").strip()
     low = body[:120].lower()
     if low.startswith("<!doctype") or low.startswith("<html"):
         raise RuntimeError(
             "A ponte abriu HTML. Atualize a implantação do Apps Script e mantenha acesso como Qualquer pessoa."
         )
     try:
-        root = r.json()
+        root = json.loads(body)
     except Exception as exc:
         raise RuntimeError("Resposta inválida da ponte Gmail") from exc
     if not root.get("ok"):

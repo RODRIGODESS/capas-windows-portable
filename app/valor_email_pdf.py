@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlencode
 
 import fitz
-import requests
+from .network import get_text_windows
 
 from .config import ACCESS_KEY, cache_dir, data_dir, downloads_dir
 from .models import CandidatePage
 
-UA = "PrincipaisCapas-Windows/1.2.5"
+UA = "PrincipaisCapas-Windows/1.2.6"
 
 
 def _valid_webapp_url(url: str) -> bool:
@@ -28,26 +29,20 @@ def _endpoint(base: str, action: str, target_date: date, page: int = 0) -> str:
 
 
 def _request_json(url: str) -> dict:
-    session = requests.Session()
-    session.trust_env = True
     try:
-        r = session.get(
+        body = get_text_windows(
             url,
-            timeout=(10, 120),
             headers={"User-Agent": UA, "Accept": "application/json,text/plain,*/*"},
-            allow_redirects=True,
+            connect_timeout=5,
+            read_timeout=22,
         )
-    except requests.Timeout as exc:
-        raise RuntimeError("Ponte Gmail do Valor excedeu o tempo de resposta") from exc
-    except requests.RequestException as exc:
+    except Exception as exc:
         raise RuntimeError(f"Ponte Gmail do Valor: {exc}") from exc
-    if r.status_code < 200 or r.status_code >= 300:
-        raise RuntimeError(f"Ponte Gmail do Valor HTTP {r.status_code}")
-    body = (r.text or "").strip()
+    body = (body or "").strip()
     if body.lower().startswith(("<!doctype", "<html")):
         raise RuntimeError("A ponte do Valor abriu HTML em vez de JSON")
     try:
-        return r.json()
+        return json.loads(body)
     except Exception as exc:
         raise RuntimeError("Resposta inválida da ponte Gmail para o Valor") from exc
 
